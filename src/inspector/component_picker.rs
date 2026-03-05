@@ -112,12 +112,11 @@ pub(crate) fn on_add_component_button_click(
         let module = table.module_path().unwrap_or("").to_string();
 
         // Read EditorMeta if present
-        let (category, description) =
-            if let Some(meta) = registration.data::<ReflectEditorMeta>() {
-                (meta.category.to_string(), meta.description.to_string())
-            } else {
-                (String::new(), String::new())
-            };
+        let (category, description) = if let Some(meta) = registration.data::<ReflectEditorMeta>() {
+            (meta.category.to_string(), meta.description.to_string())
+        } else {
+            (String::new(), String::new())
+        };
 
         // Determine group
         let group = if !category.is_empty() {
@@ -140,7 +139,11 @@ pub(crate) fn on_add_component_button_click(
 
     // Sort within each group alphabetically by short name
     for entries in grouped.values_mut() {
-        entries.sort_by(|a, b| a.short_name.to_lowercase().cmp(&b.short_name.to_lowercase()));
+        entries.sort_by(|a, b| {
+            a.short_name
+                .to_lowercase()
+                .cmp(&b.short_name.to_lowercase())
+        });
     }
 
     // Spawn the picker panel
@@ -283,16 +286,14 @@ pub(crate) fn on_add_component_button_click(
                         });
                     }),
                     observe(
-                        move |hover: On<Pointer<Over>>,
-                              mut bg: Query<&mut BackgroundColor>| {
+                        move |hover: On<Pointer<Over>>, mut bg: Query<&mut BackgroundColor>| {
                             if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
                                 bg.0 = tokens::HOVER_BG;
                             }
                         },
                     ),
                     observe(
-                        move |out: On<Pointer<Out>>,
-                              mut bg: Query<&mut BackgroundColor>| {
+                        move |out: On<Pointer<Out>>, mut bg: Query<&mut BackgroundColor>| {
                             if let Ok(mut bg) = bg.get_mut(out.event_target()) {
                                 bg.0 = Color::NONE;
                             }

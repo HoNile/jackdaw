@@ -1,15 +1,15 @@
-use bevy::input_focus::InputFocus;
-use bevy::{
-    picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility},
-    prelude::*,
-    ui::UiGlobalTransform,
-};
 use crate::{
     EditorEntity,
     gizmos::GizmoDragState,
     modal_transform::{ModalTransformState, ViewportDragState},
     selection::Selection,
     viewport::SceneViewport,
+};
+use bevy::input_focus::InputFocus;
+use bevy::{
+    picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility},
+    prelude::*,
+    ui::UiGlobalTransform,
 };
 
 pub struct ViewportSelectPlugin;

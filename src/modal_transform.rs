@@ -721,8 +721,8 @@ fn viewport_drag_finish(
     // Handle duplicated grab mode (click-to-place, no button held)
     if let Some(ref active) = drag_state.active {
         if active.duplicated {
-            let cancel = mouse.just_pressed(MouseButton::Right)
-                || keyboard.just_pressed(KeyCode::Escape);
+            let cancel =
+                mouse.just_pressed(MouseButton::Right) || keyboard.just_pressed(KeyCode::Escape);
             let confirm = mouse.just_pressed(MouseButton::Left);
 
             if cancel {

@@ -224,16 +224,15 @@ fn build_inspector_displays(
                     return None;
                 }
                 let short = table.short_path().to_string();
-                let module_group =
-                    if let Some(meta) = registration.data::<ReflectEditorMeta>()
-                        && !meta.category.is_empty()
-                    {
-                        let cat = meta.category.to_string();
-                        custom_groups.insert(cat.clone());
-                        cat
-                    } else {
-                        extract_module_group(table.module_path())
-                    };
+                let module_group = if let Some(meta) = registration.data::<ReflectEditorMeta>()
+                    && !meta.category.is_empty()
+                {
+                    let cat = meta.category.to_string();
+                    custom_groups.insert(cat.clone());
+                    cat
+                } else {
+                    extract_module_group(table.module_path())
+                };
                 return Some((short, module_group, component_id));
             }
 
@@ -424,10 +423,7 @@ fn build_inspector_displays(
 
             // Priority 3c: Terrain — custom inspector sections
             if type_id == TypeId::of::<jackdaw_jsn::Terrain>() {
-                crate::terrain::inspector::spawn_terrain_inspector_container(
-                    commands,
-                    body_entity,
-                );
+                crate::terrain::inspector::spawn_terrain_inspector_container(commands, body_entity);
                 continue;
             }
 
@@ -462,9 +458,9 @@ fn build_inspector_displays(
 
     commands.spawn((
         AddComponentButton,
-        jackdaw_feathers::button::button(
-            jackdaw_feathers::button::ButtonProps::new("+ Add Component"),
-        ),
+        jackdaw_feathers::button::button(jackdaw_feathers::button::ButtonProps::new(
+            "+ Add Component",
+        )),
         ChildOf(inspector_entity),
     ));
 }
