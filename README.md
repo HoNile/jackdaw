@@ -1,8 +1,22 @@
 <img width="1917" height="1033" alt="image" src="https://github.com/user-attachments/assets/fa53542b-de0a-420b-bde0-bdcb180992a5" />
 
+## Usage
+
+Add [`jackdaw::EditorPlugin`](src/lib.rs#L62) to your app.
+
+```rust
+use bevy::prelude::*;
+use jackdaw::EditorPlugin;
+
+fn main() -> AppExit {
+    App::new()
+        .add_plugins((DefaultPlugins, EditorPlugin))
+        ...
+        .run()
+}
 ```
-cargo run --example basic
-```
+
+Or have a look at the [examples](examples/) for more advanced useages.
 
 ## Keyboard Shortcuts
 
