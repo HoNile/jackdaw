@@ -292,9 +292,36 @@ pub fn duplicate_selected(world: &mut World) {
             continue;
         };
 
-        // Rename to "<name> (Copy)"
+        // Rename with incremented number suffix
         if let Some(name) = world.get::<Name>(new_root) {
-            let new_name = format!("{} (Copy)", name.as_str());
+            // Strip trailing " (Copy)" chains and trailing " N" to find base name
+            let mut base = name.as_str().to_string();
+            while base.ends_with(" (Copy)") {
+                base.truncate(base.len() - 7);
+            }
+            if let Some(pos) = base.rfind(' ') {
+                if base[pos + 1..].parse::<u32>().is_ok() {
+                    base.truncate(pos);
+                }
+            }
+
+            // Find highest existing number for this base name
+            let mut max_num = 0u32;
+            let mut query = world.query::<&Name>();
+            for existing in query.iter(world) {
+                let s = existing.as_str();
+                if s == base {
+                    max_num = max_num.max(1);
+                } else if let Some(rest) = s.strip_prefix(base.as_str()) {
+                    if let Some(num_str) = rest.strip_prefix(' ') {
+                        if let Ok(n) = num_str.parse::<u32>() {
+                            max_num = max_num.max(n);
+                        }
+                    }
+                }
+            }
+
+            let new_name = format!("{} {}", base, max_num + 1);
             world.entity_mut(new_root).insert(Name::new(new_name));
         }
 

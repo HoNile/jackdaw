@@ -936,9 +936,12 @@ fn append_to_brush(active: &ActiveDraw, commands: &mut Commands) {
                     uv_offset: old_face.uv_offset,
                     uv_scale: old_face.uv_scale,
                     uv_rotation: old_face.uv_rotation,
+                    uv_u_axis: old_face.uv_u_axis,
+                    uv_v_axis: old_face.uv_v_axis,
                 }
             } else {
                 // New face from the appended shape — use last-used material
+                let (u, v) = compute_face_tangent_axes(hull_face.normal);
                 BrushFaceData {
                     plane: BrushPlane {
                         normal: hull_face.normal,
@@ -946,6 +949,8 @@ fn append_to_brush(active: &ActiveDraw, commands: &mut Commands) {
                     },
                     material: last_mat.clone().unwrap_or_default(),
                     uv_scale: Vec2::ONE,
+                    uv_u_axis: u,
+                    uv_v_axis: v,
                     ..default()
                 }
             };
@@ -1430,10 +1435,18 @@ fn manage_draw_preview_mesh(
                         .collect();
                     let normals: Vec<[f32; 3]> =
                         vec![face_data.plane.normal.to_array(); indices.len()];
+                    let (u_axis, v_axis) = if face_data.uv_u_axis != Vec3::ZERO
+                        && face_data.uv_v_axis != Vec3::ZERO
+                    {
+                        (face_data.uv_u_axis, face_data.uv_v_axis)
+                    } else {
+                        compute_face_tangent_axes(face_data.plane.normal)
+                    };
                     let uvs = compute_face_uvs(
                         &frag_verts,
                         indices,
-                        face_data.plane.normal,
+                        u_axis,
+                        v_axis,
                         face_data.uv_offset,
                         face_data.uv_scale,
                         face_data.uv_rotation,
@@ -1514,62 +1527,30 @@ fn build_cutter_planes(active: &ActiveDraw) -> Vec<BrushFaceData> {
         plane.origin + plane.axis_u * (min_u + max_u) / 2.0 + plane.axis_v * (min_v + max_v) / 2.0;
     let center = center_on_plane + plane.normal * active.depth / 2.0;
 
-    vec![
-        // +U face
-        BrushFaceData {
-            plane: BrushPlane {
-                normal: plane.axis_u,
-                distance: plane.axis_u.dot(center) + half_u,
-            },
-            uv_scale: Vec2::ONE,
-            ..default()
-        },
-        // -U face
-        BrushFaceData {
-            plane: BrushPlane {
-                normal: -plane.axis_u,
-                distance: (-plane.axis_u).dot(center) + half_u,
-            },
-            uv_scale: Vec2::ONE,
-            ..default()
-        },
-        // +V face
-        BrushFaceData {
-            plane: BrushPlane {
-                normal: plane.axis_v,
-                distance: plane.axis_v.dot(center) + half_v,
-            },
-            uv_scale: Vec2::ONE,
-            ..default()
-        },
-        // -V face
-        BrushFaceData {
-            plane: BrushPlane {
-                normal: -plane.axis_v,
-                distance: (-plane.axis_v).dot(center) + half_v,
-            },
-            uv_scale: Vec2::ONE,
-            ..default()
-        },
-        // +Normal face (depth direction)
-        BrushFaceData {
-            plane: BrushPlane {
-                normal: plane.normal,
-                distance: plane.normal.dot(center) + half_depth,
-            },
-            uv_scale: Vec2::ONE,
-            ..default()
-        },
-        // -Normal face (inset by 0.001 to avoid EPSILON-boundary artifacts)
-        BrushFaceData {
-            plane: BrushPlane {
-                normal: -plane.normal,
-                distance: (-plane.normal).dot(center) + half_depth - 0.001,
-            },
-            uv_scale: Vec2::ONE,
-            ..default()
-        },
-    ]
+    let normals_dists = [
+        (plane.axis_u, plane.axis_u.dot(center) + half_u),
+        (-plane.axis_u, (-plane.axis_u).dot(center) + half_u),
+        (plane.axis_v, plane.axis_v.dot(center) + half_v),
+        (-plane.axis_v, (-plane.axis_v).dot(center) + half_v),
+        (plane.normal, plane.normal.dot(center) + half_depth),
+        (
+            -plane.normal,
+            (-plane.normal).dot(center) + half_depth - 0.001,
+        ),
+    ];
+    normals_dists
+        .iter()
+        .map(|&(normal, distance)| {
+            let (u, v) = compute_face_tangent_axes(normal);
+            BrushFaceData {
+                plane: BrushPlane { normal, distance },
+                uv_scale: Vec2::ONE,
+                uv_u_axis: u,
+                uv_v_axis: v,
+                ..default()
+            }
+        })
+        .collect()
 }
 
 /// Build N+2 world-space cutter planes from a polygon prism ActiveDraw.
@@ -1584,22 +1565,28 @@ fn build_cutter_planes_polygon(active: &ActiveDraw) -> Vec<BrushFaceData> {
     let mut faces = Vec::new();
 
     // Top cap (+normal)
+    let (top_u, top_v) = compute_face_tangent_axes(normal);
     faces.push(BrushFaceData {
         plane: BrushPlane {
             normal,
             distance: normal.dot(center) + half_depth,
         },
         uv_scale: Vec2::ONE,
+        uv_u_axis: top_u,
+        uv_v_axis: top_v,
         ..default()
     });
 
     // Bottom cap (-normal, inset by 0.001 to avoid EPSILON-boundary artifacts)
+    let (bot_u, bot_v) = compute_face_tangent_axes(-normal);
     faces.push(BrushFaceData {
         plane: BrushPlane {
             normal: -normal,
             distance: (-normal).dot(center) + half_depth - 0.001,
         },
         uv_scale: Vec2::ONE,
+        uv_u_axis: bot_u,
+        uv_v_axis: bot_v,
         ..default()
     });
 
@@ -1618,12 +1605,15 @@ fn build_cutter_planes_polygon(active: &ActiveDraw) -> Vec<BrushFaceData> {
             side_normal = -side_normal;
         }
         let distance = side_normal.dot(a);
+        let (su, sv) = compute_face_tangent_axes(side_normal);
         faces.push(BrushFaceData {
             plane: BrushPlane {
                 normal: side_normal,
                 distance,
             },
             uv_scale: Vec2::ONE,
+            uv_u_axis: su,
+            uv_v_axis: sv,
             ..default()
         });
     }
@@ -1984,8 +1974,11 @@ fn join_selected_brushes(
                     uv_offset: old_face.uv_offset,
                     uv_scale: old_face.uv_scale,
                     uv_rotation: old_face.uv_rotation,
+                    uv_u_axis: old_face.uv_u_axis,
+                    uv_v_axis: old_face.uv_v_axis,
                 }
             } else {
+                let (u, v) = compute_face_tangent_axes(hull_face.normal);
                 BrushFaceData {
                     plane: BrushPlane {
                         normal: hull_face.normal,
@@ -1993,6 +1986,8 @@ fn join_selected_brushes(
                     },
                     material: last_mat.clone().unwrap_or_default(),
                     uv_scale: Vec2::ONE,
+                    uv_u_axis: u,
+                    uv_v_axis: v,
                     ..default()
                 }
             };

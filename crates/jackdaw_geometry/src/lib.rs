@@ -16,6 +16,21 @@ pub struct BrushFaceData {
     pub uv_offset: Vec2,
     pub uv_scale: Vec2,
     pub uv_rotation: f32,
+    /// Explicit U tangent axis (Valve 220 style). Zero means "not initialized".
+    pub uv_u_axis: Vec3,
+    /// Explicit V tangent axis (Valve 220 style). Zero means "not initialized".
+    pub uv_v_axis: Vec3,
+}
+
+impl BrushFaceData {
+    /// Ensure UV axes are initialized. Call after creating a face.
+    pub fn ensure_uv_axes(&mut self) {
+        if self.uv_u_axis == Vec3::ZERO || self.uv_v_axis == Vec3::ZERO {
+            let (u, v) = compute_face_tangent_axes(self.plane.normal);
+            self.uv_u_axis = u;
+            self.uv_v_axis = v;
+        }
+    }
 }
 
 /// Solve the intersection of three planes. Returns None if degenerate.
@@ -146,16 +161,16 @@ pub fn compute_face_tangent_axes(normal: Vec3) -> (Vec3, Vec3) {
     (u, v)
 }
 
-/// Compute UVs for vertices on a face using paraxial projection.
+/// Compute UVs for vertices on a face using explicit tangent axes.
 pub fn compute_face_uvs(
     vertices: &[Vec3],
     indices: &[usize],
-    normal: Vec3,
+    u_axis: Vec3,
+    v_axis: Vec3,
     uv_offset: Vec2,
     uv_scale: Vec2,
     uv_rotation: f32,
 ) -> Vec<[f32; 2]> {
-    let (u_axis, v_axis) = compute_face_tangent_axes(normal);
     let cos_r = uv_rotation.cos();
     let sin_r = uv_rotation.sin();
 
@@ -196,6 +211,8 @@ pub fn brush_planes_to_world(
                 uv_offset: face.uv_offset,
                 uv_scale: face.uv_scale,
                 uv_rotation: face.uv_rotation,
+                uv_u_axis: (rotation * face.uv_u_axis).normalize_or_zero(),
+                uv_v_axis: (rotation * face.uv_v_axis).normalize_or_zero(),
             }
         })
         .collect()
@@ -256,7 +273,7 @@ pub fn subtract_brush(
             // Outside half: keeps the part outside the cutter through this face
             let mut outside_faces = fragment.clone();
             let template = &fragment[0];
-            outside_faces.push(BrushFaceData {
+            let mut new_face = BrushFaceData {
                 plane: BrushPlane {
                     normal: -n,
                     distance: -d,
@@ -264,7 +281,9 @@ pub fn subtract_brush(
                 uv_scale: Vec2::ONE,
                 material: template.material.clone(),
                 ..default()
-            });
+            };
+            new_face.ensure_uv_axes();
+            outside_faces.push(new_face);
             let (outside_verts, _) = compute_brush_geometry(&outside_faces);
             if outside_verts.len() >= 4 {
                 result_fragments.push(outside_faces);
@@ -273,7 +292,7 @@ pub fn subtract_brush(
             // Inside half: keeps the part inside the cutter through this face
             let mut inside_faces = fragment.clone();
             let template = &fragment[0];
-            inside_faces.push(BrushFaceData {
+            let mut new_face = BrushFaceData {
                 plane: BrushPlane {
                     normal: n,
                     distance: d,
@@ -281,7 +300,9 @@ pub fn subtract_brush(
                 uv_scale: Vec2::ONE,
                 material: template.material.clone(),
                 ..default()
-            });
+            };
+            new_face.ensure_uv_axes();
+            inside_faces.push(new_face);
             let (inside_verts, _) = compute_brush_geometry(&inside_faces);
             if inside_verts.len() >= 4 {
                 next_remaining.push(inside_faces);

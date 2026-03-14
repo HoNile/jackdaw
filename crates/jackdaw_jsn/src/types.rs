@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 // Re-export geometry types so consumers see them from jackdaw_jsn
-pub use jackdaw_geometry::{BrushFaceData, BrushPlane};
+pub use jackdaw_geometry::{BrushFaceData, BrushPlane, compute_face_tangent_axes};
 
 /// Canonical brush data. Serialized. Geometry derived from this.
 #[derive(Component, Reflect, Clone, Debug, Default)]
@@ -16,63 +16,30 @@ pub struct Brush {
 impl Brush {
     /// Create a cuboid brush from 6 axis-aligned face planes.
     pub fn cuboid(half_x: f32, half_y: f32, half_z: f32) -> Self {
+        let normals = [
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ];
+        let distances = [half_x, half_x, half_y, half_y, half_z, half_z];
         Self {
-            faces: vec![
-                // +X
-                BrushFaceData {
-                    plane: BrushPlane {
-                        normal: Vec3::X,
-                        distance: half_x,
-                    },
-                    uv_scale: Vec2::ONE,
-                    ..default()
-                },
-                // -X
-                BrushFaceData {
-                    plane: BrushPlane {
-                        normal: Vec3::NEG_X,
-                        distance: half_x,
-                    },
-                    uv_scale: Vec2::ONE,
-                    ..default()
-                },
-                // +Y
-                BrushFaceData {
-                    plane: BrushPlane {
-                        normal: Vec3::Y,
-                        distance: half_y,
-                    },
-                    uv_scale: Vec2::ONE,
-                    ..default()
-                },
-                // -Y
-                BrushFaceData {
-                    plane: BrushPlane {
-                        normal: Vec3::NEG_Y,
-                        distance: half_y,
-                    },
-                    uv_scale: Vec2::ONE,
-                    ..default()
-                },
-                // +Z
-                BrushFaceData {
-                    plane: BrushPlane {
-                        normal: Vec3::Z,
-                        distance: half_z,
-                    },
-                    uv_scale: Vec2::ONE,
-                    ..default()
-                },
-                // -Z
-                BrushFaceData {
-                    plane: BrushPlane {
-                        normal: Vec3::NEG_Z,
-                        distance: half_z,
-                    },
-                    uv_scale: Vec2::ONE,
-                    ..default()
-                },
-            ],
+            faces: normals
+                .iter()
+                .zip(distances.iter())
+                .map(|(&normal, &distance)| {
+                    let (u, v) = compute_face_tangent_axes(normal);
+                    BrushFaceData {
+                        plane: BrushPlane { normal, distance },
+                        uv_scale: Vec2::ONE,
+                        uv_u_axis: u,
+                        uv_v_axis: v,
+                        ..default()
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -95,22 +62,28 @@ impl Brush {
         let mut faces = Vec::new();
 
         // Top cap: faces outward along +normal
+        let (top_u, top_v) = compute_face_tangent_axes(normal);
         faces.push(BrushFaceData {
             plane: BrushPlane {
                 normal,
                 distance: half_depth,
             },
             uv_scale: Vec2::ONE,
+            uv_u_axis: top_u,
+            uv_v_axis: top_v,
             ..default()
         });
 
         // Bottom cap: faces outward along -normal
+        let (bot_u, bot_v) = compute_face_tangent_axes(-normal);
         faces.push(BrushFaceData {
             plane: BrushPlane {
                 normal: -normal,
                 distance: half_depth,
             },
             uv_scale: Vec2::ONE,
+            uv_u_axis: bot_u,
+            uv_v_axis: bot_v,
             ..default()
         });
 
@@ -127,28 +100,23 @@ impl Brush {
             }
 
             // Ensure outward-facing: dot with (vertex - centroid) should be positive
-            if side_normal.dot(a - centroid) < 0.0 {
-                let side_normal = -side_normal;
-                let distance = side_normal.dot(a);
-                faces.push(BrushFaceData {
-                    plane: BrushPlane {
-                        normal: side_normal,
-                        distance,
-                    },
-                    uv_scale: Vec2::ONE,
-                    ..default()
-                });
+            let side_normal = if side_normal.dot(a - centroid) < 0.0 {
+                -side_normal
             } else {
-                let distance = side_normal.dot(a);
-                faces.push(BrushFaceData {
-                    plane: BrushPlane {
-                        normal: side_normal,
-                        distance,
-                    },
-                    uv_scale: Vec2::ONE,
-                    ..default()
-                });
-            }
+                side_normal
+            };
+            let distance = side_normal.dot(a);
+            let (su, sv) = compute_face_tangent_axes(side_normal);
+            faces.push(BrushFaceData {
+                plane: BrushPlane {
+                    normal: side_normal,
+                    distance,
+                },
+                uv_scale: Vec2::ONE,
+                uv_u_axis: su,
+                uv_v_axis: sv,
+                ..default()
+            });
         }
 
         if faces.len() < 4 {
@@ -212,9 +180,12 @@ impl Brush {
                 } else {
                     (normal, distance)
                 };
+                let (u, v) = compute_face_tangent_axes(normal);
                 BrushFaceData {
                     plane: BrushPlane { normal, distance },
                     uv_scale: Vec2::ONE,
+                    uv_u_axis: u,
+                    uv_v_axis: v,
                     ..default()
                 }
             })

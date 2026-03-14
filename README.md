@@ -80,6 +80,7 @@ Or have a look at the [examples](examples/) for more advanced useages.
 | X / Y / Z | Constrain axis |
 | Shift+Click | Multi-select |
 | Delete | Delete selected element |
+| PageUp/PageDown | Nudge selected vertices/edges/faces up/down |
 | Enter | Apply clip plane |
 | Esc | Exit brush edit |
 

@@ -39,17 +39,23 @@ pub(crate) fn rebuild_brush_meshes(
                 all_normals.push(face_data.plane.normal.to_array());
             }
 
+            let (u_axis, v_axis) = if face_data.uv_u_axis != Vec3::ZERO
+                && face_data.uv_v_axis != Vec3::ZERO
+            {
+                (face_data.uv_u_axis, face_data.uv_v_axis)
+            } else {
+                compute_face_tangent_axes(face_data.plane.normal)
+            };
             let uvs = compute_face_uvs(
                 &vertices,
                 indices,
-                face_data.plane.normal,
+                u_axis,
+                v_axis,
                 face_data.uv_offset,
                 face_data.uv_scale,
                 face_data.uv_rotation,
             );
             all_uvs.extend_from_slice(&uvs);
-
-            let (u_axis, v_axis) = compute_face_tangent_axes(face_data.plane.normal);
             let w = face_data
                 .plane
                 .normal

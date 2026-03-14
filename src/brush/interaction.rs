@@ -135,14 +135,80 @@ pub(super) fn brush_face_interact(
     mut brush_selection: ResMut<BrushSelection>,
     brush_caches: Query<&BrushMeshCache>,
     selection: Res<Selection>,
-    brushes_check: Query<(), With<Brush>>,
     mut brushes: Query<(&mut Brush, &GlobalTransform)>,
     mut drag_state: ResMut<BrushDragState>,
     input_focus: Res<InputFocus>,
     mut history: ResMut<CommandHistory>,
     mut commands: Commands,
+    snap_settings: Res<crate::snapping::SnapSettings>,
 ) {
     let in_face_edit = matches!(*edit_mode, EditMode::BrushEdit(BrushEditMode::Face));
+
+    // PageUp/PageDown: nudge selected face vertices vertically (gabling)
+    // Handled before temporary_mode exit so keyboard nudges work regardless of shift state.
+    if in_face_edit
+        && !drag_state.active
+        && drag_state.pending.is_none()
+        && !brush_selection.faces.is_empty()
+    {
+        if let Some(brush_entity) = brush_selection.entity {
+            let nudge_dir = if keyboard.just_pressed(KeyCode::PageUp) {
+                Some(1.0)
+            } else if keyboard.just_pressed(KeyCode::PageDown) {
+                Some(-1.0)
+            } else {
+                None
+            };
+            if let Some(dir) = nudge_dir {
+                // Commit to face mode if we were in temporary mode
+                brush_selection.temporary_mode = false;
+
+                let grid = snap_settings.grid_size();
+                if let Ok(cache) = brush_caches.get(brush_entity) {
+                    if let Ok((mut brush, _)) = brushes.get_mut(brush_entity) {
+                        let old = brush.clone();
+                        let offset = Vec3::new(0.0, dir * grid, 0.0);
+                        let mut new_verts = cache.vertices.clone();
+                        // Collect unique vertex indices from all selected faces
+                        let mut affected: HashSet<usize> = HashSet::new();
+                        for &fi in &brush_selection.faces {
+                            if let Some(poly) = cache.face_polygons.get(fi) {
+                                affected.extend(poly.iter().copied());
+                            }
+                        }
+                        for vi in &affected {
+                            if *vi < new_verts.len() {
+                                new_verts[*vi] += offset;
+                            }
+                        }
+                        if let Some((new_brush, old_to_new)) = rebuild_brush_from_vertices(
+                            &old,
+                            &cache.vertices,
+                            &cache.face_polygons,
+                            &new_verts,
+                        ) {
+                            *brush = new_brush;
+                            // Remap face selection to match new face ordering
+                            brush_selection.faces = brush_selection
+                                .faces
+                                .iter()
+                                .filter_map(|&fi| old_to_new.get(fi).copied())
+                                .collect();
+                            let cmd = SetBrush {
+                                entity: brush_entity,
+                                old,
+                                new: brush.clone(),
+                                label: "Nudge brush face".to_string(),
+                            };
+                            history.undo_stack.push(Box::new(cmd));
+                            history.redo_stack.clear();
+                        }
+                    }
+                }
+                return;
+            }
+        }
+    }
 
     // Temporary face mode: exit when shift is released and no drag is active
     if in_face_edit && brush_selection.temporary_mode {
@@ -381,7 +447,7 @@ pub(super) fn brush_face_interact(
     let brush_entity = if in_face_edit {
         brush_selection.entity
     } else {
-        selection.primary().filter(|&e| brushes_check.contains(e))
+        selection.primary().filter(|&e| brushes.contains(e))
     };
     let Some(brush_entity) = brush_entity else {
         return;
@@ -584,6 +650,7 @@ pub(super) fn brush_vertex_interact(
     mut drag_state: ResMut<VertexDragState>,
     input_focus: Res<InputFocus>,
     mut history: ResMut<CommandHistory>,
+    snap_settings: Res<crate::snapping::SnapSettings>,
 ) {
     let EditMode::BrushEdit(BrushEditMode::Vertex) = *edit_mode else {
         drag_state.active = false;
@@ -592,6 +659,56 @@ pub(super) fn brush_vertex_interact(
     };
     if input_focus.0.is_some() {
         return;
+    }
+
+    let Some(brush_entity) = brush_selection.entity else {
+        return;
+    };
+
+    // PageUp/PageDown: nudge selected vertices vertically (no cursor needed)
+    if !drag_state.active
+        && drag_state.pending.is_none()
+        && !brush_selection.vertices.is_empty()
+    {
+        let nudge_dir = if keyboard.just_pressed(KeyCode::PageUp) {
+            Some(1.0)
+        } else if keyboard.just_pressed(KeyCode::PageDown) {
+            Some(-1.0)
+        } else {
+            None
+        };
+        if let Some(dir) = nudge_dir {
+            let grid = snap_settings.grid_size();
+            if let Ok(cache) = brush_caches.get(brush_entity) {
+                if let Ok(mut brush) = brushes.get_mut(brush_entity) {
+                    let old = brush.clone();
+                    let offset = Vec3::new(0.0, dir * grid, 0.0);
+                    let mut new_verts = cache.vertices.clone();
+                    for &vi in &brush_selection.vertices {
+                        if vi < new_verts.len() {
+                            new_verts[vi] += offset;
+                        }
+                    }
+                    if let Some((new_brush, _)) = rebuild_brush_from_vertices(
+                        &old,
+                        &cache.vertices,
+                        &cache.face_polygons,
+                        &new_verts,
+                    ) {
+                        *brush = new_brush;
+                        let cmd = SetBrush {
+                            entity: brush_entity,
+                            old,
+                            new: brush.clone(),
+                            label: "Nudge brush vertex".to_string(),
+                        };
+                        history.undo_stack.push(Box::new(cmd));
+                        history.redo_stack.clear();
+                    }
+                }
+            }
+            return;
+        }
     }
 
     let Ok(window) = windows.single() else {
@@ -605,10 +722,6 @@ pub(super) fn brush_vertex_interact(
     };
     let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, camera, &viewport_query)
     else {
-        return;
-    };
-
-    let Some(brush_entity) = brush_selection.entity else {
         return;
     };
 
@@ -742,7 +855,7 @@ pub(super) fn brush_vertex_interact(
             }
         }
 
-        if let Some(new_brush) = rebuild_brush_from_vertices(
+        if let Some((new_brush, _)) = rebuild_brush_from_vertices(
             start,
             &drag_state.start_all_vertices,
             &drag_state.start_face_polygons,
@@ -882,6 +995,7 @@ pub(super) fn brush_edge_interact(
     mut drag_state: ResMut<EdgeDragState>,
     input_focus: Res<InputFocus>,
     mut history: ResMut<CommandHistory>,
+    snap_settings: Res<crate::snapping::SnapSettings>,
 ) {
     let EditMode::BrushEdit(BrushEditMode::Edge) = *edit_mode else {
         drag_state.active = false;
@@ -890,6 +1004,60 @@ pub(super) fn brush_edge_interact(
     };
     if input_focus.0.is_some() {
         return;
+    }
+
+    let Some(brush_entity) = brush_selection.entity else {
+        return;
+    };
+
+    // PageUp/PageDown: nudge selected edge vertices vertically (no cursor needed)
+    if !drag_state.active
+        && drag_state.pending.is_none()
+        && !brush_selection.edges.is_empty()
+    {
+        let nudge_dir = if keyboard.just_pressed(KeyCode::PageUp) {
+            Some(1.0)
+        } else if keyboard.just_pressed(KeyCode::PageDown) {
+            Some(-1.0)
+        } else {
+            None
+        };
+        if let Some(dir) = nudge_dir {
+            let grid = snap_settings.grid_size();
+            if let Ok(cache) = brush_caches.get(brush_entity) {
+                if let Ok(mut brush) = brushes.get_mut(brush_entity) {
+                    let old = brush.clone();
+                    let offset = Vec3::new(0.0, dir * grid, 0.0);
+                    let mut new_verts = cache.vertices.clone();
+                    let mut seen = HashSet::new();
+                    for &(a, b) in &brush_selection.edges {
+                        if seen.insert(a) && a < new_verts.len() {
+                            new_verts[a] += offset;
+                        }
+                        if seen.insert(b) && b < new_verts.len() {
+                            new_verts[b] += offset;
+                        }
+                    }
+                    if let Some((new_brush, _)) = rebuild_brush_from_vertices(
+                        &old,
+                        &cache.vertices,
+                        &cache.face_polygons,
+                        &new_verts,
+                    ) {
+                        *brush = new_brush;
+                        let cmd = SetBrush {
+                            entity: brush_entity,
+                            old,
+                            new: brush.clone(),
+                            label: "Nudge brush edge".to_string(),
+                        };
+                        history.undo_stack.push(Box::new(cmd));
+                        history.redo_stack.clear();
+                    }
+                }
+            }
+            return;
+        }
     }
 
     let Ok(window) = windows.single() else {
@@ -903,10 +1071,6 @@ pub(super) fn brush_edge_interact(
     };
     let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, camera, &viewport_query)
     else {
-        return;
-    };
-
-    let Some(brush_entity) = brush_selection.entity else {
         return;
     };
 
@@ -1035,7 +1199,7 @@ pub(super) fn brush_edge_interact(
             }
         }
 
-        if let Some(new_brush) = rebuild_brush_from_vertices(
+        if let Some((new_brush, _)) = rebuild_brush_from_vertices(
             start,
             &drag_state.start_all_vertices,
             &drag_state.start_face_polygons,
@@ -1276,7 +1440,7 @@ pub(super) fn handle_brush_delete(
                 return; // need at least a tetrahedron
             }
             let old = brush.clone();
-            if let Some(new_brush) =
+            if let Some((new_brush, _)) =
                 rebuild_brush_from_vertices(&old, &cache.vertices, &cache.face_polygons, &remaining)
             {
                 *brush = new_brush;
@@ -1314,7 +1478,7 @@ pub(super) fn handle_brush_delete(
                 return;
             }
             let old = brush.clone();
-            if let Some(new_brush) =
+            if let Some((new_brush, _)) =
                 rebuild_brush_from_vertices(&old, &cache.vertices, &cache.face_polygons, &remaining)
             {
                 *brush = new_brush;
@@ -1538,18 +1702,24 @@ pub(super) fn handle_clip_mode(
             let Ok(mut brush) = brushes.get_mut(brush_entity) else {
                 return;
             };
+            let (clip_u, clip_v) = compute_face_tangent_axes(plane.normal);
             let clip_face = BrushFaceData {
                 plane: plane.clone(),
                 uv_offset: Vec2::ZERO,
                 uv_scale: Vec2::ONE,
                 uv_rotation: 0.0,
+                uv_u_axis: clip_u,
+                uv_v_axis: clip_v,
                 ..default()
             };
+            let (flip_u, flip_v) = compute_face_tangent_axes(-plane.normal);
             let flipped_face = BrushFaceData {
                 plane: BrushPlane {
                     normal: -plane.normal,
                     distance: -plane.distance,
                 },
+                uv_u_axis: flip_u,
+                uv_v_axis: flip_v,
                 ..clip_face.clone()
             };
 
