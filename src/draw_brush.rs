@@ -153,6 +153,7 @@ fn configure_draw_brush_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
 
 fn draw_brush_activate(
     keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     input_focus: Res<InputFocus>,
     mut draw_state: ResMut<DrawBrushState>,
     modal: Res<crate::modal_transform::ModalTransformState>,
@@ -172,8 +173,10 @@ fn draw_brush_activate(
         return;
     }
 
-    // B = draw in Add mode, C = draw in Cut mode
-    let mode = if keyboard.just_pressed(KeyCode::KeyB) {
+    // B or Mouse4 = draw in Add mode, C = draw in Cut mode
+    let mode = if keyboard.just_pressed(KeyCode::KeyB)
+        || mouse.just_pressed(MouseButton::Back)
+    {
         DrawMode::Add
     } else if keyboard.just_pressed(KeyCode::KeyC) {
         DrawMode::Cut
