@@ -402,12 +402,6 @@ fn handle_entity_keys(world: &mut World) {
         delete_selected(world);
     } else if ctrl && d_pressed {
         duplicate_selected(world);
-        let selection = world.resource::<Selection>();
-        if let Some(entity) = selection.primary() {
-            world
-                .resource_mut::<crate::modal_transform::ViewportDragState>()
-                .pending_grab = Some(entity);
-        }
     } else if ctrl && c_pressed {
         copy_components(world);
     } else if ctrl && v_pressed {

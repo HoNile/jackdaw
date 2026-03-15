@@ -30,7 +30,7 @@ pub struct BoxSelectState {
     pub current: Vec2,
 }
 
-fn handle_viewport_click(
+pub(crate) fn handle_viewport_click(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
@@ -118,6 +118,23 @@ fn handle_viewport_click(
             {
                 best_entity = Some(ancestor);
                 break;
+            }
+        }
+
+        // If we'd select a different entity, but the current selection is also
+        // under the cursor (overlapping geometry), keep the current selection.
+        // This prevents re-selecting the original after Ctrl+D duplication.
+        if let Some(candidate) = best_entity {
+            if let Some(current_primary) = selection.primary() {
+                if candidate != current_primary {
+                    for (hit_entity, _) in hits {
+                        if find_selectable_ancestor(*hit_entity, &scene_entities, &parents)
+                            == Some(current_primary)
+                        {
+                            return;
+                        }
+                    }
+                }
             }
         }
     }

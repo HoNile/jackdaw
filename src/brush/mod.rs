@@ -66,6 +66,9 @@ pub struct BrushSelection {
     pub edges: Vec<(usize, usize)>,
     /// True when face mode was entered via shift+click (temporary peek).
     pub temporary_mode: bool,
+    /// Remembered face from the last time face mode was exited (for extend-to-brush fallback).
+    pub last_face_entity: Option<Entity>,
+    pub last_face_index: Option<usize>,
 }
 
 /// Material palette for brush faces.

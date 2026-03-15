@@ -41,6 +41,11 @@ pub(super) fn handle_edit_mode_keys(
     if let EditMode::BrushEdit(_) = *edit_mode {
         if let Some(brush_entity) = brush_selection.entity {
             if selection.primary() != Some(brush_entity) {
+                // Save last selected face for extend-to-brush fallback
+                if !brush_selection.faces.is_empty() {
+                    brush_selection.last_face_entity = Some(brush_entity);
+                    brush_selection.last_face_index = brush_selection.faces.last().copied();
+                }
                 *edit_mode = EditMode::Object;
                 brush_selection.entity = None;
                 brush_selection.faces.clear();

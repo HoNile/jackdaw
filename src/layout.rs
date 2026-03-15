@@ -525,6 +525,7 @@ fn spawn_keybind_help_content(parent: &mut ChildSpawnerCommands) {
                 ("J", "Join (convex merge)"),
                 ("Ctrl+K", "CSG Subtract"),
                 ("Ctrl+Shift+K", "CSG Intersect"),
+                ("Ctrl+E", "Extend face to brush"),
             ],
         ),
         (

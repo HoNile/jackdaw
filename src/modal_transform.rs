@@ -48,7 +48,6 @@ pub struct ActiveModal {
 pub struct ViewportDragState {
     pub pending: Option<PendingDrag>,
     pub active: Option<ActiveDrag>,
-    pub pending_grab: Option<Entity>,
 }
 
 pub struct PendingDrag {
@@ -64,8 +63,6 @@ pub struct ActiveDrag {
     pub start_transform: Transform,
     /// Viewport-local cursor position at drag start.
     pub start_viewport_cursor: Vec2,
-    /// Whether this drag was initiated with Ctrl (duplicate-and-move).
-    pub duplicated: bool,
 }
 
 pub struct ModalTransformPlugin;
@@ -82,7 +79,7 @@ impl Plugin for ModalTransformPlugin {
                 Update,
                 (
                     snap_toggle,
-                    viewport_drag_detect,
+                    viewport_drag_detect.after(crate::viewport_select::handle_viewport_click),
                     viewport_drag_update,
                     viewport_drag_finish,
                 )
@@ -486,29 +483,6 @@ fn viewport_drag_detect(
         return;
     }
 
-    // Handle pending grab from duplicate (Ctrl+D)
-    if let Some(grab_entity) = drag_state.pending_grab.take() {
-        if let Ok((_, local_tf)) = transforms.get(grab_entity) {
-            if let Ok(window) = windows.single() {
-                if let Some(cursor_pos) = window.cursor_position() {
-                    if let Ok((camera, _)) = camera_query.single() {
-                        if let Some(viewport_cursor) =
-                            window_to_viewport_cursor(cursor_pos, camera, &viewport_query)
-                        {
-                            drag_state.active = Some(ActiveDrag {
-                                entity: grab_entity,
-                                start_transform: *local_tf,
-                                start_viewport_cursor: viewport_cursor,
-                                duplicated: true,
-                            });
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // Block viewport drag during brush edit mode or draw mode
     if *edit_mode != crate::brush::EditMode::Object || draw_state.active.is_some() {
         return;
@@ -610,10 +584,7 @@ fn viewport_drag_update(
 ) {
     if !mouse.pressed(MouseButton::Left) {
         drag_state.pending = None;
-        // Allow duplicated grabs to continue without mouse button held
-        if !drag_state.active.as_ref().is_some_and(|a| a.duplicated) {
-            return;
-        }
+        return;
     }
 
     // Cancel pending drag if terrain sculpt mode became active
@@ -646,7 +617,6 @@ fn viewport_drag_update(
                 entity: pending.entity,
                 start_transform: pending.start_transform,
                 start_viewport_cursor: pending.start_viewport_cursor,
-                duplicated: false,
             };
             drag_state.active = Some(active);
             drag_state.pending = None;
@@ -711,46 +681,11 @@ fn viewport_drag_update(
 
 fn viewport_drag_finish(
     mouse: Res<ButtonInput<MouseButton>>,
-    keyboard: Res<ButtonInput<KeyCode>>,
     mut drag_state: ResMut<ViewportDragState>,
-    mut transforms: Query<&mut Transform>,
+    transforms: Query<&Transform>,
     mut history: ResMut<CommandHistory>,
     mut cursor_query: Query<&mut CursorOptions, With<Window>>,
 ) {
-    // Handle duplicated grab mode (click-to-place, no button held)
-    if let Some(ref active) = drag_state.active {
-        if active.duplicated {
-            let cancel =
-                mouse.just_pressed(MouseButton::Right) || keyboard.just_pressed(KeyCode::Escape);
-            let confirm = mouse.just_pressed(MouseButton::Left);
-
-            if cancel {
-                if let Ok(mut transform) = transforms.get_mut(active.entity) {
-                    *transform = active.start_transform;
-                }
-                drag_state.active = None;
-                return;
-            }
-
-            if confirm {
-                let active = drag_state.active.take().unwrap();
-                drag_state.pending = None;
-                if let Ok(transform) = transforms.get(active.entity) {
-                    let cmd = SetTransform {
-                        entity: active.entity,
-                        old_transform: active.start_transform,
-                        new_transform: *transform,
-                    };
-                    history.undo_stack.push(Box::new(cmd));
-                    history.redo_stack.clear();
-                }
-                return;
-            }
-
-            return; // Waiting for confirm/cancel
-        }
-    }
-
     if !mouse.just_released(MouseButton::Left) {
         return;
     }

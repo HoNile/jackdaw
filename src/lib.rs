@@ -215,6 +215,7 @@ fn populate_menu(world: &mut World) {
                     ("edit.join", "Join (Convex Merge)"),
                     ("edit.csg_subtract", "CSG Subtract"),
                     ("edit.csg_intersect", "CSG Intersect"),
+                    ("edit.extend_to_brush", "Extend to Brush"),
                 ],
             ),
             (
@@ -316,6 +317,67 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
         }
         "edit.csg_intersect" => {
             commands.queue(draw_brush::csg_intersect_selected_impl);
+        }
+        "edit.extend_to_brush" => {
+            commands.queue(|world: &mut World| {
+                let edit_mode = *world.resource::<crate::brush::EditMode>();
+                let selection = world.resource::<Selection>();
+                let entities = selection.entities.clone();
+
+                let brush_selection = world.resource::<crate::brush::BrushSelection>();
+
+                // Resolve primary + face_index: prefer active face-mode selection,
+                // fall back to remembered face.
+                let (primary, face_index) = if edit_mode
+                    == crate::brush::EditMode::BrushEdit(crate::brush::BrushEditMode::Face)
+                {
+                    let primary = brush_selection.entity;
+                    let face = brush_selection.faces.last().copied();
+                    match (primary, face) {
+                        (Some(p), Some(f)) => (p, f),
+                        _ => return,
+                    }
+                } else {
+                    let primary = match selection.primary() {
+                        Some(e) => e,
+                        None => return,
+                    };
+                    let face_index = if brush_selection.last_face_entity == Some(primary) {
+                        brush_selection.last_face_index
+                    } else {
+                        None
+                    };
+                    match face_index {
+                        Some(f) => (primary, f),
+                        None => return,
+                    }
+                };
+
+                let mut brush_query = world.query_filtered::<Entity, With<jackdaw_jsn::Brush>>();
+                let targets: Vec<Entity> = entities
+                    .iter()
+                    .copied()
+                    .filter(|&e| e != primary && brush_query.get(world, e).is_ok())
+                    .collect();
+                if targets.is_empty() {
+                    return;
+                }
+
+                draw_brush::extend_face_to_brush_impl(world, primary, &targets, face_index);
+
+                // Exit face mode if we were in it (geometry changed, indices invalid)
+                if edit_mode == crate::brush::EditMode::BrushEdit(crate::brush::BrushEditMode::Face)
+                {
+                    *world.resource_mut::<crate::brush::EditMode>() =
+                        crate::brush::EditMode::Object;
+                    let mut bs = world.resource_mut::<crate::brush::BrushSelection>();
+                    bs.entity = None;
+                    bs.faces.clear();
+                    bs.vertices.clear();
+                    bs.edges.clear();
+                    bs.temporary_mode = false;
+                }
+            });
         }
         "view.wireframe" => {
             commands.queue(|world: &mut World| {
