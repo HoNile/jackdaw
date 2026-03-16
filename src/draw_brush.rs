@@ -174,9 +174,7 @@ fn draw_brush_activate(
     }
 
     // B or Mouse4 = draw in Add mode, C = draw in Cut mode
-    let mode = if keyboard.just_pressed(KeyCode::KeyB)
-        || mouse.just_pressed(MouseButton::Back)
-    {
+    let mode = if keyboard.just_pressed(KeyCode::KeyB) || mouse.just_pressed(MouseButton::Back) {
         DrawMode::Add
     } else if keyboard.just_pressed(KeyCode::KeyC) {
         DrawMode::Cut

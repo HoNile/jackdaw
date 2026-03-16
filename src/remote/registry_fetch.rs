@@ -56,10 +56,7 @@ pub fn poll_registry_task(
                 components: std::collections::HashMap::new(),
             };
 
-            info!(
-                "Fetched remote registry: {} types",
-                registry.types.len()
-            );
+            info!("Fetched remote registry: {} types", registry.types.len());
 
             // Cache to disk if project is open
             if let Some(project) = project {

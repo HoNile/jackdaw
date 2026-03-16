@@ -83,20 +83,14 @@ pub fn poll_connection_tasks(
         Ok(value) => {
             match serde_json::from_value::<JackdawAppInfo>(value) {
                 Ok(app_info) => {
-                    info!(
-                        "Connected to remote game: {}",
-                        app_info.app_name
-                    );
+                    info!("Connected to remote game: {}", app_info.app_name);
                     manager.state = ConnectionState::Connected {
                         app_info: app_info.clone(),
                     };
                     manager.heartbeat_timer = 0.0;
 
                     // Kick off registry fetch
-                    super::registry_fetch::start_registry_fetch(
-                        &mut commands,
-                        &manager.endpoint,
-                    );
+                    super::registry_fetch::start_registry_fetch(&mut commands, &manager.endpoint);
                 }
                 Err(e) => {
                     manager.state = ConnectionState::Error(format!("Invalid app_info: {e}"));

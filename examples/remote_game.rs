@@ -22,9 +22,7 @@ fn main() -> AppExit {
             }),
             ..default()
         }))
-        .add_plugins(
-            JackdawRemotePlugin::default().with_app_name("Remote Test Game"),
-        )
+        .add_plugins(JackdawRemotePlugin::default().with_app_name("Remote Test Game"))
         .register_type::<Health>()
         .register_type::<Speed>()
         .register_type::<Inventory>()

@@ -131,10 +131,7 @@ pub fn remote_debug_workspace_content() -> impl Bundle {
                 },
                 TextColor(tokens::TEXT_SECONDARY),
                 Node {
-                    padding: UiRect::axes(
-                        Val::Px(tokens::SPACING_SM),
-                        Val::Px(tokens::SPACING_XS),
-                    ),
+                    padding: UiRect::axes(Val::Px(tokens::SPACING_SM), Val::Px(tokens::SPACING_XS),),
                     ..Default::default()
                 },
             ),
@@ -235,18 +232,16 @@ pub fn poll_snapshot_task(mut commands: Commands, task: Option<ResMut<RemoteSnap
     commands.remove_resource::<RemoteSnapshotTask>();
 
     match result {
-        Ok(value) => {
-            match serde_json::from_value::<Vec<RemoteEntity>>(value) {
-                Ok(entities) => {
-                    commands.queue(move |world: &mut World| {
-                        apply_scene_snapshot(world, entities);
-                    });
-                }
-                Err(e) => {
-                    warn!("Failed to parse scene snapshot: {e}");
-                }
+        Ok(value) => match serde_json::from_value::<Vec<RemoteEntity>>(value) {
+            Ok(entities) => {
+                commands.queue(move |world: &mut World| {
+                    apply_scene_snapshot(world, entities);
+                });
             }
-        }
+            Err(e) => {
+                warn!("Failed to parse scene snapshot: {e}");
+            }
+        },
         Err(e) => {
             warn!("Scene snapshot request failed: {e}");
         }
@@ -265,8 +260,7 @@ fn apply_scene_snapshot(world: &mut World, entities: Vec<RemoteEntity>) {
 
     // Build lookup structures for the new snapshot
     let new_bits: HashSet<u64> = entities.iter().map(|e| e.entity).collect();
-    let entity_map: HashMap<u64, &RemoteEntity> =
-        entities.iter().map(|e| (e.entity, e)).collect();
+    let entity_map: HashMap<u64, &RemoteEntity> = entities.iter().map(|e| (e.entity, e)).collect();
 
     // Get current proxy set
     let current_bits: HashSet<u64> = {
@@ -291,7 +285,10 @@ fn apply_scene_snapshot(world: &mut World, entities: Vec<RemoteEntity>) {
                 if let Ok(ec) = world.get_entity_mut(row) {
                     ec.despawn();
                 }
-                world.resource_mut::<RemoteTreeRowIndex>().map.remove(&proxy);
+                world
+                    .resource_mut::<RemoteTreeRowIndex>()
+                    .map
+                    .remove(&proxy);
             }
             // Despawn proxy
             if let Ok(ec) = world.get_entity_mut(proxy) {
@@ -314,9 +311,7 @@ fn apply_scene_snapshot(world: &mut World, entities: Vec<RemoteEntity>) {
         };
         if let Some(proxy) = proxy_entity {
             // Only mutate if the name actually changed (avoids spurious Mutation events)
-            let current_name = world
-                .get::<RemoteEntityName>(proxy)
-                .map(|n| n.0.clone());
+            let current_name = world.get::<RemoteEntityName>(proxy).map(|n| n.0.clone());
             if current_name != Some(new_name.clone()) {
                 if let Some(mut name_comp) = world.get_mut::<RemoteEntityName>(proxy) {
                     name_comp.0 = new_name;
@@ -400,9 +395,7 @@ fn apply_scene_snapshot(world: &mut World, entities: Vec<RemoteEntity>) {
         // Build children_of map to know which roots have children
         let children_of: HashSet<u64> = entities
             .iter()
-            .filter_map(|e| {
-                extract_parent(e).filter(|p| new_bits.contains(p))
-            })
+            .filter_map(|e| extract_parent(e).filter(|p| new_bits.contains(p)))
             .collect();
 
         for &root_bits in &new_root_bits {
@@ -424,9 +417,7 @@ fn apply_scene_snapshot(world: &mut World, entities: Vec<RemoteEntity>) {
         // Build children_of for has_children check
         let children_of: HashSet<u64> = entities
             .iter()
-            .filter_map(|e| {
-                extract_parent(e).filter(|p| new_bits.contains(p))
-            })
+            .filter_map(|e| extract_parent(e).filter(|p| new_bits.contains(p)))
             .collect();
 
         for bits in &added {
@@ -478,12 +469,8 @@ fn update_expanded_children(world: &mut World, entities: &[RemoteEntity], new_bi
     // Collect expanded+populated remote tree rows
     let expanded_rows: Vec<(Entity, u64)> = {
         let mut results = Vec::new();
-        let mut query = world.query::<(
-            Entity,
-            &TreeNodeExpanded,
-            &TreeChildrenPopulated,
-            &TreeNode,
-        )>();
+        let mut query =
+            world.query::<(Entity, &TreeNodeExpanded, &TreeChildrenPopulated, &TreeNode)>();
         for (entity, expanded, populated, tree_node) in query.iter(world) {
             if !expanded.0 || !populated.0 {
                 continue;
@@ -538,14 +525,10 @@ fn update_expanded_children(world: &mut World, entities: &[RemoteEntity], new_bi
                         ec.despawn();
                     }
                 }
-                if let Some(mut pop) =
-                    world.get_mut::<TreeChildrenPopulated>(tree_row_entity)
-                {
+                if let Some(mut pop) = world.get_mut::<TreeChildrenPopulated>(tree_row_entity) {
                     pop.0 = false;
                 }
-                if let Some(mut exp) =
-                    world.get_mut::<TreeNodeExpanded>(tree_row_entity)
-                {
+                if let Some(mut exp) = world.get_mut::<TreeNodeExpanded>(tree_row_entity) {
                     exp.0 = false;
                 }
             }
@@ -608,7 +591,14 @@ fn spawn_remote_tree_row(
 
     let tree_row_entity = world
         .spawn((
-            tree_row(&label, has_children, false, proxy, EntityCategory::Entity, &style),
+            tree_row(
+                &label,
+                has_children,
+                false,
+                proxy,
+                EntityCategory::Entity,
+                &style,
+            ),
             ChildOf(parent_container),
         ))
         .id();
@@ -821,7 +811,11 @@ pub fn cleanup_remote_proxies(
 
     // Reset status text
     for entity in &status_texts {
-        if let Some(mut text) = commands.get_entity(entity).ok().and_then(|_| None::<Mut<Text>>) {
+        if let Some(mut text) = commands
+            .get_entity(entity)
+            .ok()
+            .and_then(|_| None::<Mut<Text>>)
+        {
             text.0 = "Not connected".to_string();
         }
     }

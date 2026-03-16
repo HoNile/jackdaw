@@ -241,9 +241,7 @@ pub fn on_connection_indicator_click(
                                     Val::Px(tokens::SPACING_LG),
                                     Val::Px(tokens::SPACING_SM),
                                 ),
-                                border_radius: BorderRadius::all(Val::Px(
-                                    tokens::BORDER_RADIUS_SM,
-                                )),
+                                border_radius: BorderRadius::all(Val::Px(tokens::BORDER_RADIUS_SM)),
                                 justify_content: JustifyContent::Center,
                                 ..Default::default()
                             },

@@ -291,13 +291,13 @@ fn spawn_fallback_section(
         .id();
 
     let section_for_toggle = section;
-    commands.entity(header).observe(
-        move |_: On<Pointer<Click>>, mut commands: Commands| {
+    commands
+        .entity(header)
+        .observe(move |_: On<Pointer<Click>>, mut commands: Commands| {
             commands.trigger(ToggleCollapsible {
                 entity: section_for_toggle,
             });
-        },
-    );
+        });
 
     commands.spawn((
         Text::new(String::from(Icon::FileBraces.unicode())),
@@ -353,9 +353,7 @@ fn spawn_fallback_section(
             &editor_font.0,
             false,
         );
-        commands
-            .entity(display_entity)
-            .insert(ChildOf(group_body));
+        commands.entity(display_entity).insert(ChildOf(group_body));
 
         let json_text =
             serde_json::to_string_pretty(json_value).unwrap_or_else(|_| format!("{json_value}"));

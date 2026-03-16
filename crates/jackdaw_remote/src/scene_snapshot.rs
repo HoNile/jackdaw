@@ -118,10 +118,7 @@ impl ReflectSerializerProcessor for RemoteSerializerProcessor {
         }
 
         // Handle<T> → null
-        if registry
-            .get_type_data::<ReflectHandle>(type_id)
-            .is_some()
-        {
+        if registry.get_type_data::<ReflectHandle>(type_id).is_some() {
             return Ok(Ok(serializer.serialize_unit()?));
         }
 

@@ -917,8 +917,14 @@ pub fn update_edit_tool_highlights(
 /// Toggle workspace container visibility when ActiveWorkspace changes.
 pub fn update_workspace_visibility(
     workspace: Res<ActiveWorkspace>,
-    mut scene_editors: Query<&mut Node, (With<SceneEditorWorkspace>, Without<RemoteDebugWorkspace>)>,
-    mut remote_debugs: Query<&mut Node, (With<RemoteDebugWorkspace>, Without<SceneEditorWorkspace>)>,
+    mut scene_editors: Query<
+        &mut Node,
+        (With<SceneEditorWorkspace>, Without<RemoteDebugWorkspace>),
+    >,
+    mut remote_debugs: Query<
+        &mut Node,
+        (With<RemoteDebugWorkspace>, Without<SceneEditorWorkspace>),
+    >,
 ) {
     if !workspace.is_changed() {
         return;

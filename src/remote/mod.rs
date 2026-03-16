@@ -2,8 +2,8 @@ mod brp;
 mod connection;
 pub mod entity_browser;
 pub mod panel;
-pub mod remote_inspector;
 mod registry_fetch;
+pub mod remote_inspector;
 
 use bevy::prelude::*;
 

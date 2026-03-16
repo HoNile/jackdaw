@@ -102,21 +102,17 @@ impl Plugin for JackdawRemotePlugin {
 
         if needs_app_info {
             let system_id = world.register_system(jackdaw_app_info_handler);
-            world
-                .resource_mut::<RemoteMethods>()
-                .insert(
-                    "jackdaw/app_info",
-                    bevy::remote::RemoteMethodSystemId::Instant(system_id),
-                );
+            world.resource_mut::<RemoteMethods>().insert(
+                "jackdaw/app_info",
+                bevy::remote::RemoteMethodSystemId::Instant(system_id),
+            );
         }
         if needs_scene_snapshot {
             let system_id = world.register_system(scene_snapshot_handler);
-            world
-                .resource_mut::<RemoteMethods>()
-                .insert(
-                    "jackdaw/scene_snapshot",
-                    bevy::remote::RemoteMethodSystemId::Instant(system_id),
-                );
+            world.resource_mut::<RemoteMethods>().insert(
+                "jackdaw/scene_snapshot",
+                bevy::remote::RemoteMethodSystemId::Instant(system_id),
+            );
         }
     }
 }

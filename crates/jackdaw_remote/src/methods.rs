@@ -1,8 +1,4 @@
-use bevy::{
-    prelude::*,
-    reflect::TypeRegistry,
-    remote::BrpResult,
-};
+use bevy::{prelude::*, reflect::TypeRegistry, remote::BrpResult};
 use serde_json::Value;
 use std::path::Path;
 
@@ -75,30 +71,32 @@ pub fn generate_component_definitions(type_registry: Res<AppTypeRegistry>) {
         let type_path = type_info.type_path();
 
         // Skip Bevy internals
-        if SKIP_PREFIXES.iter().any(|prefix| type_path.starts_with(prefix)) {
+        if SKIP_PREFIXES
+            .iter()
+            .any(|prefix| type_path.starts_with(prefix))
+        {
             continue;
         }
 
         // Only include types that have ReflectComponent
-        if registration
-            .data::<ReflectComponent>()
-            .is_none()
-        {
+        if registration.data::<ReflectComponent>().is_none() {
             continue;
         }
 
         // Skip if already defined (preserve hand-edits)
         if existing.components.contains_key(type_path) {
             // Merge new fields into existing definition
-            merge_fields_from_registry(&registry, type_info, existing.components.get_mut(type_path).unwrap());
+            merge_fields_from_registry(
+                &registry,
+                type_info,
+                existing.components.get_mut(type_path).unwrap(),
+            );
             continue;
         }
 
         // Build a new definition from the type info
         let def = build_component_def(&registry, type_info);
-        existing
-            .components
-            .insert(type_path.to_string(), def);
+        existing.components.insert(type_path.to_string(), def);
         added += 1;
     }
 
@@ -108,7 +106,9 @@ pub fn generate_component_definitions(type_registry: Res<AppTypeRegistry>) {
             if let Err(e) = std::fs::write(&components_path, data) {
                 warn!("JackdawRemote: Failed to write components.jsn: {e}");
             } else if added > 0 {
-                info!("JackdawRemote: Generated {added} new component definitions in .jsn/components.jsn");
+                info!(
+                    "JackdawRemote: Generated {added} new component definitions in .jsn/components.jsn"
+                );
             }
         }
         Err(e) => {
