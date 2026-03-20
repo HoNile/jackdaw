@@ -404,7 +404,7 @@ fn add_custom_property_from_ui(world: &mut World, source_entity: Entity) {
     let mut new = old.clone();
     new.properties.insert(name, default_value);
 
-    let cmd = SetCustomProperties {
+    let mut cmd = SetCustomProperties {
         entity: source_entity,
         old_properties: old,
         new_properties: new,
@@ -428,7 +428,7 @@ fn remove_custom_property(world: &mut World, source_entity: Entity, property_nam
     let mut new = old.clone();
     new.properties.remove(property_name);
 
-    let cmd = SetCustomProperties {
+    let mut cmd = SetCustomProperties {
         entity: source_entity,
         old_properties: old,
         new_properties: new,
@@ -456,7 +456,7 @@ fn apply_custom_property_with_undo(
     let mut new = old.clone();
     new.properties.insert(property_name.to_string(), new_value);
 
-    let cmd = SetCustomProperties {
+    let mut cmd = SetCustomProperties {
         entity: source_entity,
         old_properties: old,
         new_properties: new,

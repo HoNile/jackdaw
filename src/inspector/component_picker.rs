@@ -274,7 +274,7 @@ pub(crate) fn on_add_component_button_click(
                                 type_id,
                                 component_id,
                             };
-                            let cmd = Box::new(cmd);
+                            let mut cmd = Box::new(cmd);
                             cmd.execute(world);
                             let mut history =
                                 world.resource_mut::<crate::commands::CommandHistory>();

@@ -4,8 +4,8 @@ use bevy::{ecs::system::SystemParam, input_focus::InputFocus, prelude::*};
 
 use crate::colors;
 use crate::{
-    commands::{CommandHistory, snapshot_entity},
-    draw_brush::CreateBrushCommand,
+    commands::CommandHistory,
+    draw_brush::{CreateBrushCommand, brush_data_from_entity},
     keybinds::{EditorAction, KeybindRegistry},
     selection::{Selected, Selection},
     viewport::{MainViewportCamera, SceneViewport},
@@ -653,11 +653,9 @@ fn spawn_extruded_brush(
             world.entity_mut(entity).insert(Selected);
         }
 
-        // Snapshot for undo
-        let snapshot = snapshot_entity(world, entity);
+        // Store brush data for undo
         let cmd = CreateBrushCommand {
-            entity,
-            scene_snapshot: snapshot,
+            data: brush_data_from_entity(world, entity),
         };
         let mut history = world.resource_mut::<CommandHistory>();
         history.undo_stack.push(Box::new(cmd));
@@ -1849,10 +1847,8 @@ pub(super) fn handle_clip_mode(
                         }
                         let entity = spawner.id();
 
-                        let snapshot = crate::commands::snapshot_entity(world, entity);
                         let create_cmd = CreateBrushCommand {
-                            entity,
-                            scene_snapshot: snapshot,
+                            data: brush_data_from_entity(world, entity),
                         };
 
                         let group = crate::commands::CommandGroup {

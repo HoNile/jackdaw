@@ -412,16 +412,16 @@ pub struct InstantiateEntities {
 }
 
 impl EditorCommand for InstantiateEntities {
-    fn execute(&self, world: &mut World) {
+    fn execute(&mut self, world: &mut World) {
         // Redo: respawn from snapshots (DespawnEntity::undo respawns)
-        for snapshot in &self.snapshots {
+        for snapshot in &mut self.snapshots {
             snapshot.undo(world);
         }
     }
 
-    fn undo(&self, world: &mut World) {
+    fn undo(&mut self, world: &mut World) {
         // Undo: despawn the instantiated entities
-        for snapshot in &self.snapshots {
+        for snapshot in &mut self.snapshots {
             snapshot.execute(world);
         }
     }

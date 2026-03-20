@@ -112,13 +112,13 @@ pub struct SetBrush {
 }
 
 impl EditorCommand for SetBrush {
-    fn execute(&self, world: &mut World) {
+    fn execute(&mut self, world: &mut World) {
         if let Some(mut brush) = world.get_mut::<Brush>(self.entity) {
             *brush = self.new.clone();
         }
     }
 
-    fn undo(&self, world: &mut World) {
+    fn undo(&mut self, world: &mut World) {
         if let Some(mut brush) = world.get_mut::<Brush>(self.entity) {
             *brush = self.old.clone();
         }

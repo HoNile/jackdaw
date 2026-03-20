@@ -13,7 +13,7 @@ use crate::{
     brush::{BrushFaceEntity, BrushMaterialPalette},
     commands::{
         CommandGroup, CommandHistory, DespawnEntity, EditorCommand, collect_entity_ids,
-        snapshot_entity, snapshot_rebuild,
+        deselect_entities,
     },
     selection::{Selected, Selection},
     snapping::SnapSettings,
@@ -31,6 +31,29 @@ const EXTRUDE_DEPTH_SENSITIVITY: f32 = 0.003;
 const MIN_FOOTPRINT_SIZE: f32 = 0.01;
 const MIN_EXTRUDE_DEPTH: f32 = 0.01;
 const MIN_FRAGMENT_SIZE: f32 = 0.005;
+
+/// Stable identifier that persists across despawn/respawn cycles for undo/redo.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct BrushStableId(u64);
+
+#[derive(Resource, Default)]
+struct StableIdCounter(u64);
+
+impl StableIdCounter {
+    fn next(&mut self) -> BrushStableId {
+        self.0 += 1;
+        BrushStableId(self.0)
+    }
+}
+
+/// Find the current Entity for a given stable ID, if it exists.
+fn entity_by_stable_id(world: &mut World, id: BrushStableId) -> Option<Entity> {
+    world
+        .query::<(Entity, &BrushStableId)>()
+        .iter(world)
+        .find(|(_, sid)| **sid == id)
+        .map(|(e, _)| e)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DrawPhase {
@@ -89,21 +112,137 @@ pub struct DrawBrushState {
     pub active: Option<ActiveDraw>,
 }
 
+/// Minimal data needed to respawn a brush entity.
+#[derive(Clone)]
+pub struct BrushData {
+    stable_id: BrushStableId,
+    brush: Brush,
+    transform: Transform,
+    name: String,
+    parent_stable_id: Option<BrushStableId>,
+}
+
+/// Either a single brush or a group containing child brushes.
+#[derive(Clone)]
+enum BrushOrGroup {
+    Single(BrushData),
+    Group {
+        stable_id: BrushStableId,
+        transform: Transform,
+        name: String,
+        parent_stable_id: Option<BrushStableId>,
+        children: Vec<BrushData>,
+    },
+}
+
+/// Read brush data from an existing entity. Lazily assigns a `BrushStableId` if missing.
+pub fn brush_data_from_entity(world: &mut World, entity: Entity) -> BrushData {
+    // Ensure the entity has a stable ID
+    let stable_id = if let Some(sid) = world.get::<BrushStableId>(entity) {
+        *sid
+    } else {
+        let sid = world.resource_mut::<StableIdCounter>().next();
+        world.entity_mut(entity).insert(sid);
+        sid
+    };
+
+    // Ensure parent has a stable ID too
+    let parent_stable_id = if let Some(child_of) = world.get::<ChildOf>(entity) {
+        let parent = child_of.0;
+        if let Some(psid) = world.get::<BrushStableId>(parent) {
+            Some(*psid)
+        } else {
+            let psid = world.resource_mut::<StableIdCounter>().next();
+            world.entity_mut(parent).insert(psid);
+            Some(psid)
+        }
+    } else {
+        None
+    };
+
+    BrushData {
+        stable_id,
+        brush: world.get::<Brush>(entity).unwrap().clone(),
+        transform: *world.get::<Transform>(entity).unwrap(),
+        name: world
+            .get::<Name>(entity)
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
+        parent_stable_id,
+    }
+}
+
+/// Spawn a brush entity from stored data. Returns new entity ID.
+fn spawn_brush_from_data(world: &mut World, data: &BrushData) -> Entity {
+    let parent_entity = data
+        .parent_stable_id
+        .and_then(|psid| entity_by_stable_id(world, psid));
+
+    let mut ec = world.spawn((
+        Name::new(data.name.clone()),
+        data.brush.clone(),
+        data.transform,
+        data.stable_id,
+        Visibility::default(),
+    ));
+    if let Some(parent) = parent_entity {
+        ec.insert(ChildOf(parent));
+    }
+    ec.id()
+}
+
+/// Spawn a brush or group from stored data. Returns top-level entity ID.
+fn spawn_brush_or_group(world: &mut World, data: &BrushOrGroup) -> Entity {
+    match data {
+        BrushOrGroup::Single(brush_data) => spawn_brush_from_data(world, brush_data),
+        BrushOrGroup::Group {
+            stable_id,
+            transform,
+            name,
+            parent_stable_id,
+            children,
+        } => {
+            let parent_entity = parent_stable_id
+                .and_then(|psid| entity_by_stable_id(world, psid));
+
+            let mut ec = world.spawn((
+                Name::new(name.clone()),
+                BrushGroup,
+                *transform,
+                *stable_id,
+                Visibility::default(),
+            ));
+            if let Some(p) = parent_entity {
+                ec.insert(ChildOf(p));
+            }
+            let group_id = ec.id();
+            for child in children {
+                // Children reference the group by the group's stable_id which
+                // we just spawned, so spawn_brush_from_data will find it.
+                let mut child_data = child.clone();
+                child_data.parent_stable_id = Some(*stable_id);
+                spawn_brush_from_data(world, &child_data);
+            }
+            group_id
+        }
+    }
+}
+
 pub struct CreateBrushCommand {
-    pub entity: Entity,
-    pub scene_snapshot: DynamicScene,
+    pub data: BrushData,
 }
 
 impl EditorCommand for CreateBrushCommand {
-    fn execute(&self, world: &mut World) {
-        // Redo: respawn from snapshot
-        let scene = snapshot_rebuild(&self.scene_snapshot);
-        let _result = scene.write_to_world(world, &mut Default::default());
+    fn execute(&mut self, world: &mut World) {
+        spawn_brush_from_data(world, &self.data);
     }
 
-    fn undo(&self, world: &mut World) {
-        if let Ok(entity_mut) = world.get_entity_mut(self.entity) {
-            entity_mut.despawn();
+    fn undo(&mut self, world: &mut World) {
+        if let Some(entity) = entity_by_stable_id(world, self.data.stable_id) {
+            deselect_entities(world, &[entity]);
+            if let Ok(entity_mut) = world.get_entity_mut(entity) {
+                entity_mut.despawn();
+            }
         }
     }
 
@@ -140,6 +279,7 @@ pub struct CutPreviewHidden;
 impl Plugin for DrawBrushPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DrawBrushState>()
+            .init_resource::<StableIdCounter>()
             .init_gizmo_group::<DrawBrushGizmoGroup>()
             .add_systems(Startup, configure_draw_brush_gizmos)
             .add_systems(
@@ -958,11 +1098,9 @@ fn spawn_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
             world.entity_mut(entity).insert(Selected);
         }
 
-        // Snapshot for undo
-        let snapshot = snapshot_entity(world, entity);
+        // Store brush data for undo
         let cmd = CreateBrushCommand {
-            entity,
-            scene_snapshot: snapshot,
+            data: brush_data_from_entity(world, entity),
         };
         let mut history = world.resource_mut::<CommandHistory>();
         history.undo_stack.push(Box::new(cmd));
@@ -1385,11 +1523,9 @@ fn spawn_polygon_brush(active: &ActiveDraw, commands: &mut Commands) {
             world.entity_mut(entity).insert(Selected);
         }
 
-        // Snapshot for undo
-        let snapshot = snapshot_entity(world, entity);
+        // Store brush data for undo
         let cmd = CreateBrushCommand {
-            entity,
-            scene_snapshot: snapshot,
+            data: brush_data_from_entity(world, entity),
         };
         let mut history = world.resource_mut::<CommandHistory>();
         history.undo_stack.push(Box::new(cmd));
@@ -1928,83 +2064,100 @@ fn subtract_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
             return;
         }
 
-        // Phase 3: Snapshot originals (just the entity, not children — children are rebuilt
-        // automatically by regenerate_brush_meshes when Brush component changes)
-        let mut original_snapshots: Vec<(Entity, DynamicScene)> = Vec::new();
+        // Phase 3: Capture brush data for originals (assigns stable IDs)
+        let mut originals: Vec<BrushData> = Vec::new();
         for result in &results {
-            let snapshot = DynamicSceneBuilder::from_world(world)
-                .extract_entities(std::iter::once(result.original_entity))
-                .build();
-            original_snapshots.push((result.original_entity, snapshot));
+            originals.push(brush_data_from_entity(world, result.original_entity));
         }
 
         // Capture parent group info before despawning originals
-        let mut parent_groups: std::collections::HashMap<Entity, (Entity, Vec3)> =
+        // Now using stable IDs: (original_entity -> (parent_stable_id, parent_translation))
+        let mut parent_groups: std::collections::HashMap<Entity, (BrushStableId, Vec3)> =
             std::collections::HashMap::new();
         for result in &results {
-            if let Some(info) = brush_parent_group(world, result.original_entity) {
-                parent_groups.insert(result.original_entity, info);
+            if let Some((parent_entity, parent_translation)) =
+                brush_parent_group(world, result.original_entity)
+            {
+                // Ensure the parent group has a stable ID
+                let parent_sid = if let Some(sid) = world.get::<BrushStableId>(parent_entity) {
+                    *sid
+                } else {
+                    let sid = world.resource_mut::<StableIdCounter>().next();
+                    world.entity_mut(parent_entity).insert(sid);
+                    sid
+                };
+                parent_groups.insert(result.original_entity, (parent_sid, parent_translation));
             }
         }
 
         // Clean up selection: remove originals that are about to be despawned
         {
+            let despawning: Vec<Entity> = results.iter().map(|r| r.original_entity).collect();
             let mut selection = world.resource_mut::<Selection>();
-            let despawning: Vec<Entity> = original_snapshots.iter().map(|(e, _)| *e).collect();
             selection.entities.retain(|e| !despawning.contains(e));
         }
-        for (entity, _) in &original_snapshots {
-            if let Ok(mut e) = world.get_entity_mut(*entity) {
+        for result in &results {
+            if let Ok(mut e) = world.get_entity_mut(result.original_entity) {
                 e.remove::<Selected>();
             }
         }
 
         // Despawn originals
-        for (entity, _) in &original_snapshots {
-            if let Ok(e) = world.get_entity_mut(*entity) {
+        for result in &results {
+            if let Ok(e) = world.get_entity_mut(result.original_entity) {
                 e.despawn();
             }
         }
 
-        // Spawn fragments (preserve existing parent group, or create new group for root brushes)
-        let mut result_snapshots: Vec<(Entity, DynamicScene)> = Vec::new();
-        for result in &results {
-            if let Some(&(parent_entity, parent_translation)) =
+        // Spawn fragments and build BrushOrGroup data
+        let mut fragments: Vec<BrushOrGroup> = Vec::new();
+        let mut counter = world.resource_mut::<StableIdCounter>();
+        // Pre-allocate stable IDs for all new fragments
+        let fragment_stable_ids: Vec<Vec<BrushStableId>> = results
+            .iter()
+            .map(|r| r.fragments.iter().map(|_| counter.next()).collect())
+            .collect();
+        let group_stable_ids: Vec<Option<BrushStableId>> = results
+            .iter()
+            .map(|r| {
+                if r.fragments.len() > 1 && !parent_groups.contains_key(&r.original_entity) {
+                    Some(counter.next())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (result_idx, result) in results.iter().enumerate() {
+            if let Some(&(parent_sid, parent_translation)) =
                 parent_groups.get(&result.original_entity)
             {
                 // Fragments stay in existing parent group
-                for (brush, transform) in &result.fragments {
-                    let entity = world
-                        .spawn((
-                            Name::new("Brush"),
-                            brush.clone(),
-                            Transform::from_translation(
-                                transform.translation - parent_translation,
-                            ),
-                            Visibility::default(),
-                            ChildOf(parent_entity),
-                        ))
-                        .id();
-                    let snapshot = DynamicSceneBuilder::from_world(world)
-                        .extract_entities(std::iter::once(entity))
-                        .build();
-                    result_snapshots.push((entity, snapshot));
+                for (frag_idx, (brush, transform)) in result.fragments.iter().enumerate() {
+                    let brush_data = BrushData {
+                        stable_id: fragment_stable_ids[result_idx][frag_idx],
+                        brush: brush.clone(),
+                        transform: Transform::from_translation(
+                            transform.translation - parent_translation,
+                        ),
+                        name: "Brush".to_string(),
+                        parent_stable_id: Some(parent_sid),
+                    };
+                    spawn_brush_from_data(world, &brush_data);
+                    fragments.push(BrushOrGroup::Single(brush_data));
                 }
             } else if result.fragments.len() == 1 {
                 // Single fragment: spawn standalone
                 let (brush, transform) = &result.fragments[0];
-                let entity = world
-                    .spawn((
-                        Name::new("Brush"),
-                        brush.clone(),
-                        *transform,
-                        Visibility::default(),
-                    ))
-                    .id();
-                let snapshot = DynamicSceneBuilder::from_world(world)
-                    .extract_entities(std::iter::once(entity))
-                    .build();
-                result_snapshots.push((entity, snapshot));
+                let brush_data = BrushData {
+                    stable_id: fragment_stable_ids[result_idx][0],
+                    brush: brush.clone(),
+                    transform: *transform,
+                    name: "Brush".to_string(),
+                    parent_stable_id: None,
+                };
+                spawn_brush_from_data(world, &brush_data);
+                fragments.push(BrushOrGroup::Single(brush_data));
             } else if result.fragments.len() > 1 {
                 // Multiple fragments: group under a BrushGroup parent
                 let group_center = result
@@ -2014,34 +2167,38 @@ fn subtract_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
                     .sum::<Vec3>()
                     / result.fragments.len() as f32;
 
-                let group_entity = world
-                    .spawn((
-                        Name::new("Brush Group"),
-                        BrushGroup,
-                        Transform::from_translation(group_center),
-                        Visibility::default(),
-                    ))
-                    .id();
+                let group_sid = group_stable_ids[result_idx].unwrap();
+                let children: Vec<BrushData> = result
+                    .fragments
+                    .iter()
+                    .enumerate()
+                    .map(|(frag_idx, (brush, transform))| BrushData {
+                        stable_id: fragment_stable_ids[result_idx][frag_idx],
+                        brush: brush.clone(),
+                        transform: Transform::from_translation(
+                            transform.translation - group_center,
+                        ),
+                        name: "Brush".to_string(),
+                        parent_stable_id: None, // filled in by spawn_brush_or_group
+                    })
+                    .collect();
 
-                for (brush, transform) in &result.fragments {
-                    world.spawn((
-                        Name::new("Brush"),
-                        brush.clone(),
-                        Transform::from_translation(transform.translation - group_center),
-                        Visibility::default(),
-                        ChildOf(group_entity),
-                    ));
-                }
-
-                let snapshot = snapshot_entity(world, group_entity);
-                result_snapshots.push((group_entity, snapshot));
+                let group_data = BrushOrGroup::Group {
+                    stable_id: group_sid,
+                    transform: Transform::from_translation(group_center),
+                    name: "Brush Group".to_string(),
+                    parent_stable_id: None,
+                    children,
+                };
+                spawn_brush_or_group(world, &group_data);
+                fragments.push(group_data);
             }
         }
 
         // Push undo command
         let cmd = SubtractBrushCommand {
-            originals: original_snapshots,
-            fragments: result_snapshots,
+            originals,
+            fragments,
         };
         let mut history = world.resource_mut::<CommandHistory>();
         history.undo_stack.push(Box::new(cmd));
@@ -2050,59 +2207,61 @@ fn subtract_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
 }
 
 struct SubtractBrushCommand {
-    /// Original brushes to restore on undo (entity + snapshot).
-    originals: Vec<(Entity, DynamicScene)>,
-    /// Result entities: standalone brushes or BrushGroup parents (with children in snapshot).
-    fragments: Vec<(Entity, DynamicScene)>,
+    originals: Vec<BrushData>,
+    fragments: Vec<BrushOrGroup>,
+}
+
+impl SubtractBrushCommand {
+    /// Resolve the stable ID of a `BrushOrGroup` to its current entity.
+    fn fragment_stable_id(data: &BrushOrGroup) -> BrushStableId {
+        match data {
+            BrushOrGroup::Single(d) => d.stable_id,
+            BrushOrGroup::Group { stable_id, .. } => *stable_id,
+        }
+    }
 }
 
 impl EditorCommand for SubtractBrushCommand {
-    fn execute(&self, world: &mut World) {
-        // Redo: clean up selection, despawn originals, respawn fragments
-        {
-            let entities: Vec<Entity> = self.originals.iter().map(|(e, _)| *e).collect();
-            let mut selection = world.resource_mut::<Selection>();
-            selection.entities.retain(|e| !entities.contains(e));
-        }
-        for (entity, _) in &self.originals {
-            if let Ok(mut e) = world.get_entity_mut(*entity) {
-                e.remove::<Selected>();
-            }
-        }
-        for (entity, _) in &self.originals {
+    fn execute(&mut self, world: &mut World) {
+        // Despawn originals by stable ID lookup
+        let orig_entities: Vec<Entity> = self
+            .originals
+            .iter()
+            .filter_map(|d| entity_by_stable_id(world, d.stable_id))
+            .collect();
+        deselect_entities(world, &orig_entities);
+        for entity in &orig_entities {
             if let Ok(e) = world.get_entity_mut(*entity) {
                 e.despawn();
             }
         }
-        for (_, snapshot) in &self.fragments {
-            let scene = snapshot_rebuild(snapshot);
-            let _ = scene.write_to_world(world, &mut Default::default());
+        // Spawn fragments (stable IDs are reassigned from stored data)
+        for data in &self.fragments {
+            spawn_brush_or_group(world, data);
         }
     }
 
-    fn undo(&self, world: &mut World) {
-        // Undo: clean up selection, despawn fragments (groups cascade), respawn originals
-        {
-            let mut all_entities = Vec::new();
-            for (e, _) in &self.fragments {
-                collect_entity_ids(world, *e, &mut all_entities);
-            }
-            let mut selection = world.resource_mut::<Selection>();
-            selection.entities.retain(|e| !all_entities.contains(e));
-        }
-        for (entity, _) in &self.fragments {
-            if let Ok(mut e) = world.get_entity_mut(*entity) {
-                e.remove::<Selected>();
+    fn undo(&mut self, world: &mut World) {
+        // Despawn fragments by stable ID lookup
+        let mut all_entities = Vec::new();
+        for data in &self.fragments {
+            let sid = Self::fragment_stable_id(data);
+            if let Some(entity) = entity_by_stable_id(world, sid) {
+                collect_entity_ids(world, entity, &mut all_entities);
             }
         }
-        for (entity, _) in &self.fragments {
-            if let Ok(e) = world.get_entity_mut(*entity) {
-                e.despawn();
+        deselect_entities(world, &all_entities);
+        for data in &self.fragments {
+            let sid = Self::fragment_stable_id(data);
+            if let Some(entity) = entity_by_stable_id(world, sid) {
+                if let Ok(e) = world.get_entity_mut(entity) {
+                    e.despawn();
+                }
             }
         }
-        for (_, snapshot) in &self.originals {
-            let scene = snapshot_rebuild(snapshot);
-            let _ = scene.write_to_world(world, &mut Default::default());
+        // Respawn originals (stable IDs are reassigned from stored data)
+        for data in &self.originals {
+            spawn_brush_from_data(world, data);
         }
     }
 
@@ -2485,81 +2644,95 @@ pub fn csg_subtract_selected_impl(world: &mut World) {
         return;
     }
 
-    // Snapshot originals
-    let mut original_snapshots: Vec<(Entity, DynamicScene)> = Vec::new();
+    // Capture brush data for originals (assigns stable IDs)
+    let mut originals: Vec<BrushData> = Vec::new();
     for result in &results {
-        let snapshot = DynamicSceneBuilder::from_world(world)
-            .extract_entities(std::iter::once(result.original_entity))
-            .build();
-        original_snapshots.push((result.original_entity, snapshot));
+        originals.push(brush_data_from_entity(world, result.original_entity));
     }
 
     // Capture parent group info before despawning originals
-    let mut parent_groups: std::collections::HashMap<Entity, (Entity, Vec3)> =
+    let mut parent_groups: std::collections::HashMap<Entity, (BrushStableId, Vec3)> =
         std::collections::HashMap::new();
     for result in &results {
-        if let Some(info) = brush_parent_group(world, result.original_entity) {
-            parent_groups.insert(result.original_entity, info);
+        if let Some((parent_entity, parent_translation)) =
+            brush_parent_group(world, result.original_entity)
+        {
+            let parent_sid = if let Some(sid) = world.get::<BrushStableId>(parent_entity) {
+                *sid
+            } else {
+                let sid = world.resource_mut::<StableIdCounter>().next();
+                world.entity_mut(parent_entity).insert(sid);
+                sid
+            };
+            parent_groups.insert(result.original_entity, (parent_sid, parent_translation));
         }
     }
 
     // Clean up selection: remove targets about to be despawned
     {
-        let despawning: Vec<Entity> = original_snapshots.iter().map(|(e, _)| *e).collect();
+        let despawning: Vec<Entity> = results.iter().map(|r| r.original_entity).collect();
         let mut selection = world.resource_mut::<Selection>();
         selection.entities.retain(|e| !despawning.contains(e));
     }
-    for (entity, _) in &original_snapshots {
-        if let Ok(mut e) = world.get_entity_mut(*entity) {
+    for result in &results {
+        if let Ok(mut e) = world.get_entity_mut(result.original_entity) {
             e.remove::<Selected>();
         }
     }
 
     // Despawn originals
-    for (entity, _) in &original_snapshots {
-        if let Ok(e) = world.get_entity_mut(*entity) {
+    for result in &results {
+        if let Ok(e) = world.get_entity_mut(result.original_entity) {
             e.despawn();
         }
     }
 
-    // Spawn fragments (preserve existing parent group, or create new group for root brushes)
-    let mut result_snapshots: Vec<(Entity, DynamicScene)> = Vec::new();
-    for result in &results {
-        if let Some(&(parent_entity, parent_translation)) =
+    // Spawn fragments and build BrushOrGroup data
+    let mut fragments: Vec<BrushOrGroup> = Vec::new();
+    let mut counter = world.resource_mut::<StableIdCounter>();
+    let fragment_stable_ids: Vec<Vec<BrushStableId>> = results
+        .iter()
+        .map(|r| r.fragments.iter().map(|_| counter.next()).collect())
+        .collect();
+    let group_stable_ids: Vec<Option<BrushStableId>> = results
+        .iter()
+        .map(|r| {
+            if r.fragments.len() > 1 && !parent_groups.contains_key(&r.original_entity) {
+                Some(counter.next())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (result_idx, result) in results.iter().enumerate() {
+        if let Some(&(parent_sid, parent_translation)) =
             parent_groups.get(&result.original_entity)
         {
-            // Fragments stay in existing parent group
-            for (brush, transform) in &result.fragments {
-                let entity = world
-                    .spawn((
-                        Name::new("Brush"),
-                        brush.clone(),
-                        Transform::from_translation(
-                            transform.translation - parent_translation,
-                        ),
-                        Visibility::default(),
-                        ChildOf(parent_entity),
-                    ))
-                    .id();
-                let snapshot = DynamicSceneBuilder::from_world(world)
-                    .extract_entities(std::iter::once(entity))
-                    .build();
-                result_snapshots.push((entity, snapshot));
+            for (frag_idx, (brush, transform)) in result.fragments.iter().enumerate() {
+                let brush_data = BrushData {
+                    stable_id: fragment_stable_ids[result_idx][frag_idx],
+                    brush: brush.clone(),
+                    transform: Transform::from_translation(
+                        transform.translation - parent_translation,
+                    ),
+                    name: "Brush".to_string(),
+                    parent_stable_id: Some(parent_sid),
+                };
+                spawn_brush_from_data(world, &brush_data);
+                fragments.push(BrushOrGroup::Single(brush_data));
             }
         } else if result.fragments.len() == 1 {
             let (brush, transform) = &result.fragments[0];
-            let entity = world
-                .spawn((
-                    Name::new("Brush"),
-                    brush.clone(),
-                    *transform,
-                    Visibility::default(),
-                ))
-                .id();
-            let snapshot = DynamicSceneBuilder::from_world(world)
-                .extract_entities(std::iter::once(entity))
-                .build();
-            result_snapshots.push((entity, snapshot));
+            let brush_data = BrushData {
+                stable_id: fragment_stable_ids[result_idx][0],
+                brush: brush.clone(),
+                transform: *transform,
+                name: "Brush".to_string(),
+                parent_stable_id: None,
+            };
+            spawn_brush_from_data(world, &brush_data);
+            fragments.push(BrushOrGroup::Single(brush_data));
         } else if result.fragments.len() > 1 {
             let group_center = result
                 .fragments
@@ -2568,34 +2741,38 @@ pub fn csg_subtract_selected_impl(world: &mut World) {
                 .sum::<Vec3>()
                 / result.fragments.len() as f32;
 
-            let group_entity = world
-                .spawn((
-                    Name::new("Brush Group"),
-                    BrushGroup,
-                    Transform::from_translation(group_center),
-                    Visibility::default(),
-                ))
-                .id();
+            let group_sid = group_stable_ids[result_idx].unwrap();
+            let children: Vec<BrushData> = result
+                .fragments
+                .iter()
+                .enumerate()
+                .map(|(frag_idx, (brush, transform))| BrushData {
+                    stable_id: fragment_stable_ids[result_idx][frag_idx],
+                    brush: brush.clone(),
+                    transform: Transform::from_translation(
+                        transform.translation - group_center,
+                    ),
+                    name: "Brush".to_string(),
+                    parent_stable_id: None,
+                })
+                .collect();
 
-            for (brush, transform) in &result.fragments {
-                world.spawn((
-                    Name::new("Brush"),
-                    brush.clone(),
-                    Transform::from_translation(transform.translation - group_center),
-                    Visibility::default(),
-                    ChildOf(group_entity),
-                ));
-            }
-
-            let snapshot = snapshot_entity(world, group_entity);
-            result_snapshots.push((group_entity, snapshot));
+            let group_data = BrushOrGroup::Group {
+                stable_id: group_sid,
+                transform: Transform::from_translation(group_center),
+                name: "Brush Group".to_string(),
+                parent_stable_id: None,
+                children,
+            };
+            spawn_brush_or_group(world, &group_data);
+            fragments.push(group_data);
         }
     }
 
     // Push undo command
     let cmd = SubtractBrushCommand {
-        originals: original_snapshots,
-        fragments: result_snapshots,
+        originals,
+        fragments,
     };
     let mut history = world.resource_mut::<CommandHistory>();
     history.undo_stack.push(Box::new(cmd));
@@ -2678,13 +2855,10 @@ pub fn csg_intersect_selected_impl(world: &mut World) {
         return;
     }
 
-    // Snapshot originals
-    let mut original_snapshots: Vec<(Entity, DynamicScene)> = Vec::new();
+    // Capture brush data for originals (assigns stable IDs)
+    let mut originals: Vec<BrushData> = Vec::new();
     for (entity, _, _) in &selected_brushes {
-        let snapshot = DynamicSceneBuilder::from_world(world)
-            .extract_entities(std::iter::once(*entity))
-            .build();
-        original_snapshots.push((*entity, snapshot));
+        originals.push(brush_data_from_entity(world, *entity));
     }
 
     // Clean up selection
@@ -2708,14 +2882,15 @@ pub fn csg_intersect_selected_impl(world: &mut World) {
 
     // Spawn the intersection brush
     let new_brush = Brush { faces: clean };
-    let entity = world
-        .spawn((
-            Name::new("Brush"),
-            new_brush,
-            Transform::from_translation(centroid),
-            Visibility::default(),
-        ))
-        .id();
+    let frag_sid = world.resource_mut::<StableIdCounter>().next();
+    let brush_data = BrushData {
+        stable_id: frag_sid,
+        brush: new_brush,
+        transform: Transform::from_translation(centroid),
+        name: "Brush".to_string(),
+        parent_stable_id: None,
+    };
+    let entity = spawn_brush_from_data(world, &brush_data);
 
     // Select the new brush
     {
@@ -2724,15 +2899,10 @@ pub fn csg_intersect_selected_impl(world: &mut World) {
     }
     world.entity_mut(entity).insert(Selected);
 
-    let fragment_snapshot = DynamicSceneBuilder::from_world(world)
-        .extract_entities(std::iter::once(entity))
-        .build();
-    let fragment_snapshots = vec![(entity, fragment_snapshot)];
-
     // Push undo command (reuses SubtractBrushCommand — same undo/redo pattern)
     let cmd = SubtractBrushCommand {
-        originals: original_snapshots,
-        fragments: fragment_snapshots,
+        originals,
+        fragments: vec![BrushOrGroup::Single(brush_data)],
     };
     let mut history = world.resource_mut::<CommandHistory>();
     history.undo_stack.push(Box::new(cmd));

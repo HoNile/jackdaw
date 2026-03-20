@@ -1128,7 +1128,7 @@ fn apply_color_with_undo(
         return;
     }
 
-    let cmd: Box<dyn EditorCommand> = if sub_commands.len() == 1 {
+    let mut cmd: Box<dyn EditorCommand> = if sub_commands.len() == 1 {
         sub_commands.pop().unwrap()
     } else {
         Box::new(CommandGroup {
@@ -1309,7 +1309,7 @@ fn apply_field_value_with_undo(
         return;
     }
 
-    let cmd: Box<dyn EditorCommand> = if sub_commands.len() == 1 {
+    let mut cmd: Box<dyn EditorCommand> = if sub_commands.len() == 1 {
         sub_commands.pop().unwrap()
     } else {
         Box::new(CommandGroup {
@@ -2117,7 +2117,7 @@ fn apply_enum_variant_with_undo(
         return;
     }
 
-    let cmd: Box<dyn EditorCommand> = if sub_commands.len() == 1 {
+    let mut cmd: Box<dyn EditorCommand> = if sub_commands.len() == 1 {
         sub_commands.pop().unwrap()
     } else {
         Box::new(CommandGroup {

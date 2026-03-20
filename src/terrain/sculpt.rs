@@ -33,7 +33,7 @@ pub struct SetTerrainHeights {
 }
 
 impl EditorCommand for SetTerrainHeights {
-    fn execute(&self, world: &mut World) {
+    fn execute(&mut self, world: &mut World) {
         if let Some(mut terrain) = world.get_mut::<jackdaw_jsn::Terrain>(self.entity) {
             terrain.heights = self.new_heights.clone();
         }
@@ -42,7 +42,7 @@ impl EditorCommand for SetTerrainHeights {
         }
     }
 
-    fn undo(&self, world: &mut World) {
+    fn undo(&mut self, world: &mut World) {
         if let Some(mut terrain) = world.get_mut::<jackdaw_jsn::Terrain>(self.entity) {
             terrain.heights = self.old_heights.clone();
         }

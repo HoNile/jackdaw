@@ -233,7 +233,7 @@ pub fn delete_selected(world: &mut World) {
     selection.entities.clear();
 
     // Execute all despawn commands
-    for cmd in &cmds {
+    for cmd in &mut cmds {
         cmd.execute(world);
     }
 
@@ -583,7 +583,7 @@ fn reset_transform_selected(world: &mut World, reset: TransformReset) {
             continue;
         }
 
-        let cmd = crate::commands::SetTransform {
+        let mut cmd = crate::commands::SetTransform {
             entity,
             old_transform,
             new_transform,
@@ -631,7 +631,7 @@ fn nudge_selected(world: &mut World, offset: Vec3) {
             ..old_transform
         };
 
-        let cmd = crate::commands::SetTransform {
+        let mut cmd = crate::commands::SetTransform {
             entity,
             old_transform,
             new_transform,
@@ -674,7 +674,7 @@ fn rotate_selected(world: &mut World, rotation: Quat) {
             ..old_transform
         };
 
-        let cmd = crate::commands::SetTransform {
+        let mut cmd = crate::commands::SetTransform {
             entity,
             old_transform,
             new_transform,
@@ -808,7 +808,7 @@ fn hide_selected(world: &mut World) {
             _ => Visibility::Hidden,
         };
 
-        let cmd = crate::commands::SetComponentField {
+        let mut cmd = crate::commands::SetComponentField {
             entity,
             component_type_id: std::any::TypeId::of::<Visibility>(),
             field_path: String::new(),
@@ -848,7 +848,7 @@ fn unhide_all_entities(world: &mut World) {
     };
 
     for entity in hidden {
-        let cmd = crate::commands::SetComponentField {
+        let mut cmd = crate::commands::SetComponentField {
             entity,
             component_type_id: std::any::TypeId::of::<Visibility>(),
             field_path: String::new(),
@@ -888,7 +888,7 @@ fn hide_all_entities(world: &mut World) {
     };
 
     for (entity, current) in to_hide {
-        let cmd = crate::commands::SetComponentField {
+        let mut cmd = crate::commands::SetComponentField {
             entity,
             component_type_id: std::any::TypeId::of::<Visibility>(),
             field_path: String::new(),

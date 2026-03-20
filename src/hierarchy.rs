@@ -678,7 +678,7 @@ fn on_tree_row_dropped(
 
     let old_parent = parent_query.get(dragged).ok().map(|c| c.0);
 
-    let cmd = ReparentEntity {
+    let mut cmd = ReparentEntity {
         entity: dragged,
         old_parent,
         new_parent: Some(target),
@@ -711,7 +711,7 @@ fn on_tree_row_dropped_on_root(
 
     let container_entity = *container;
 
-    let cmd = ReparentEntity {
+    let mut cmd = ReparentEntity {
         entity: dragged,
         old_parent,
         new_parent: None,
@@ -979,7 +979,7 @@ fn on_visibility_toggled(
     };
 
     commands.queue(move |world: &mut World| {
-        let cmd = Box::new(cmd);
+        let mut cmd = Box::new(cmd);
         cmd.execute(world);
         let mut history = world.resource_mut::<CommandHistory>();
         history.undo_stack.push(cmd);
@@ -1216,7 +1216,7 @@ fn on_tree_row_renamed(event: On<TreeRowRenamed>, mut commands: Commands, names:
             old_value: Box::new(Name::new(old_name)),
             new_value: Box::new(Name::new(new_name)),
         };
-        let cmd = Box::new(cmd);
+        let mut cmd = Box::new(cmd);
         cmd.execute(world);
         let mut history = world.resource_mut::<CommandHistory>();
         history.undo_stack.push(cmd);

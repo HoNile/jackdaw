@@ -19,13 +19,13 @@ pub struct SetCustomProperties {
 }
 
 impl crate::commands::EditorCommand for SetCustomProperties {
-    fn execute(&self, world: &mut World) {
+    fn execute(&mut self, world: &mut World) {
         if let Some(mut cp) = world.get_mut::<CustomProperties>(self.entity) {
             *cp = self.new_properties.clone();
         }
     }
 
-    fn undo(&self, world: &mut World) {
+    fn undo(&mut self, world: &mut World) {
         if let Some(mut cp) = world.get_mut::<CustomProperties>(self.entity) {
             *cp = self.old_properties.clone();
         }

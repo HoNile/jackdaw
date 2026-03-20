@@ -12,6 +12,7 @@ use bevy::{
 pub use jackdaw_commands::{CommandGroup, CommandHistory, EditorCommand};
 
 use crate::EditorEntity;
+use crate::selection::{Selected, Selection};
 
 pub struct CommandHistoryPlugin;
 
@@ -33,7 +34,7 @@ pub struct SetComponentField {
 }
 
 impl EditorCommand for SetComponentField {
-    fn execute(&self, world: &mut World) {
+    fn execute(&mut self, world: &mut World) {
         apply_reflected_value(
             world,
             self.entity,
@@ -43,7 +44,7 @@ impl EditorCommand for SetComponentField {
         );
     }
 
-    fn undo(&self, world: &mut World) {
+    fn undo(&mut self, world: &mut World) {
         apply_reflected_value(
             world,
             self.entity,
@@ -97,13 +98,13 @@ pub struct SetTransform {
 }
 
 impl EditorCommand for SetTransform {
-    fn execute(&self, world: &mut World) {
+    fn execute(&mut self, world: &mut World) {
         if let Some(mut transform) = world.get_mut::<Transform>(self.entity) {
             *transform = self.new_transform;
         }
     }
 
-    fn undo(&self, world: &mut World) {
+    fn undo(&mut self, world: &mut World) {
         if let Some(mut transform) = world.get_mut::<Transform>(self.entity) {
             *transform = self.old_transform;
         }
@@ -121,11 +122,11 @@ pub struct ReparentEntity {
 }
 
 impl EditorCommand for ReparentEntity {
-    fn execute(&self, world: &mut World) {
+    fn execute(&mut self, world: &mut World) {
         set_parent(world, self.entity, self.new_parent);
     }
 
-    fn undo(&self, world: &mut World) {
+    fn undo(&mut self, world: &mut World) {
         set_parent(world, self.entity, self.old_parent);
     }
 
@@ -152,7 +153,7 @@ pub struct AddComponent {
 }
 
 impl EditorCommand for AddComponent {
-    fn execute(&self, world: &mut World) {
+    fn execute(&mut self, world: &mut World) {
         let registry = world.resource::<AppTypeRegistry>().clone();
         let registry = registry.read();
 
@@ -177,7 +178,7 @@ impl EditorCommand for AddComponent {
         );
     }
 
-    fn undo(&self, world: &mut World) {
+    fn undo(&mut self, world: &mut World) {
         if let Ok(mut entity) = world.get_entity_mut(self.entity) {
             entity.remove_by_id(self.component_id);
         }
@@ -197,13 +198,13 @@ pub struct RemoveComponent {
 }
 
 impl EditorCommand for RemoveComponent {
-    fn execute(&self, world: &mut World) {
+    fn execute(&mut self, world: &mut World) {
         if let Ok(mut entity) = world.get_entity_mut(self.entity) {
             entity.remove_by_id(self.component_id);
         }
     }
 
-    fn undo(&self, world: &mut World) {
+    fn undo(&mut self, world: &mut World) {
         let registry = world.resource::<AppTypeRegistry>().clone();
         let registry = registry.read();
 
@@ -235,11 +236,11 @@ pub struct SpawnEntity {
 }
 
 impl EditorCommand for SpawnEntity {
-    fn execute(&self, world: &mut World) {
+    fn execute(&mut self, world: &mut World) {
         let _entity = (self.spawn_fn)(world);
     }
 
-    fn undo(&self, _world: &mut World) {
+    fn undo(&mut self, _world: &mut World) {
         // TODO: Track spawned entity for despawn on undo
     }
 
@@ -269,16 +270,21 @@ impl DespawnEntity {
 }
 
 impl EditorCommand for DespawnEntity {
-    fn execute(&self, world: &mut World) {
+    fn execute(&mut self, world: &mut World) {
+        deselect_entities(world, &[self.entity]);
         if let Ok(entity_mut) = world.get_entity_mut(self.entity) {
             entity_mut.despawn();
         }
     }
 
-    fn undo(&self, world: &mut World) {
+    fn undo(&mut self, world: &mut World) {
         // Re-build the scene from scratch and write it back
         let scene = snapshot_rebuild(&self.scene_snapshot);
-        let _result = scene.write_to_world(world, &mut Default::default());
+        let mut entity_map = bevy::ecs::entity::hash_map::EntityHashMap::default();
+        let _ = scene.write_to_world(world, &mut entity_map);
+        if let Some(&new_id) = entity_map.get(&self.entity) {
+            self.entity = new_id;
+        }
     }
 
     fn description(&self) -> &str {
@@ -286,11 +292,35 @@ impl EditorCommand for DespawnEntity {
     }
 }
 
+/// Create a `DynamicSceneBuilder` that excludes computed components which become
+/// stale when restored (Children references dead mesh entities, visibility flags
+/// block rendering).
+pub(crate) fn filtered_scene_builder(world: &World) -> DynamicSceneBuilder<'_> {
+    DynamicSceneBuilder::from_world(world)
+        .deny_component::<Children>()
+        .deny_component::<GlobalTransform>()
+        .deny_component::<InheritedVisibility>()
+        .deny_component::<ViewVisibility>()
+}
+
+/// Deselect the given entities: remove the `Selected` component and purge them
+/// from the `Selection` resource.  Must be called **before** despawning so that
+/// observers can clean up tree-row UI while the entities still exist.
+pub(crate) fn deselect_entities(world: &mut World, entities: &[Entity]) {
+    for &entity in entities {
+        if let Ok(mut ec) = world.get_entity_mut(entity) {
+            ec.remove::<Selected>();
+        }
+    }
+    let mut selection = world.resource_mut::<Selection>();
+    selection.entities.retain(|e| !entities.contains(e));
+}
+
 /// Create a DynamicScene snapshot of a single entity and all its descendants.
 pub(crate) fn snapshot_entity(world: &World, entity: Entity) -> DynamicScene {
     let mut entities = Vec::new();
     collect_entity_ids(world, entity, &mut entities);
-    DynamicSceneBuilder::from_world(world)
+    filtered_scene_builder(world)
         .extract_entities(entities.into_iter())
         .build()
 }
@@ -338,7 +368,7 @@ fn handle_undo_redo_keys(world: &mut World) {
         history.undo_stack.pop()
     };
 
-    if let Some(command) = command {
+    if let Some(mut command) = command {
         if redo {
             command.execute(world);
             world

@@ -33,8 +33,9 @@ impl Plugin for ViewportOverlaysPlugin {
                     .run_if(in_state(crate::AppState::Editor)),
             )
             .add_systems(
-                Update,
+                PostUpdate,
                 (draw_coordinate_indicator, draw_navmesh_region_bounds)
+                    .after(bevy::transform::TransformSystems::Propagate)
                     .run_if(in_state(crate::AppState::Editor)),
             );
     }
@@ -385,25 +386,35 @@ fn draw_camera_gizmo(
 fn draw_coordinate_indicator(
     mut gizmos: Gizmos,
     settings: Res<OverlaySettings>,
-    camera_query: Query<&GlobalTransform, With<crate::viewport::MainViewportCamera>>,
+    camera_query: Query<(&GlobalTransform, &Projection), With<crate::viewport::MainViewportCamera>>,
 ) {
     if !settings.show_coordinate_indicator {
         return;
     }
 
-    let Ok(cam_tf) = camera_query.single() else {
+    let Ok((cam_tf, projection)) = camera_query.single() else {
+        return;
+    };
+    let Projection::Perspective(proj) = projection else {
         return;
     };
 
-    let cam_pos = cam_tf.translation();
-    let cam_forward = cam_tf.forward().as_vec3();
+    // Compute visible extents at a fixed depth to place indicator at a consistent screen position
+    let depth = 0.5;
+    let half_height = depth * (proj.fov / 2.0).tan();
+    let half_width = half_height * proj.aspect_ratio;
 
-    // Place the indicator in front of the camera, offset to bottom-left
-    let indicator_pos = cam_pos
-        + cam_forward * 2.0
-        + cam_tf.right().as_vec3() * -0.8
-        + cam_tf.up().as_vec3() * -0.5;
-    let size = 0.1;
+    // NDC coordinates: bottom-left with padding
+    let ndc_x = -0.85;
+    let ndc_y = -0.80;
+
+    let indicator_pos = cam_tf.translation()
+        + cam_tf.forward().as_vec3() * depth
+        + cam_tf.right().as_vec3() * (ndc_x * half_width)
+        + cam_tf.up().as_vec3() * (ndc_y * half_height);
+
+    // Scale axis length proportionally to visible area for consistent apparent size
+    let size = half_height * 0.07;
 
     gizmos.line(
         indicator_pos,

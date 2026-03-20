@@ -3,8 +3,8 @@ pub mod keybinds;
 use bevy::prelude::*;
 
 pub trait EditorCommand: Send + Sync + 'static {
-    fn execute(&self, world: &mut World);
-    fn undo(&self, world: &mut World);
+    fn execute(&mut self, world: &mut World);
+    fn undo(&mut self, world: &mut World);
     fn description(&self) -> &str;
 }
 
@@ -15,21 +15,21 @@ pub struct CommandHistory {
 }
 
 impl CommandHistory {
-    pub fn execute(&mut self, command: Box<dyn EditorCommand>, world: &mut World) {
+    pub fn execute(&mut self, mut command: Box<dyn EditorCommand>, world: &mut World) {
         command.execute(world);
         self.undo_stack.push(command);
         self.redo_stack.clear();
     }
 
     pub fn undo(&mut self, world: &mut World) {
-        if let Some(command) = self.undo_stack.pop() {
+        if let Some(mut command) = self.undo_stack.pop() {
             command.undo(world);
             self.redo_stack.push(command);
         }
     }
 
     pub fn redo(&mut self, world: &mut World) {
-        if let Some(command) = self.redo_stack.pop() {
+        if let Some(mut command) = self.redo_stack.pop() {
             command.execute(world);
             self.undo_stack.push(command);
         }
@@ -42,14 +42,14 @@ pub struct CommandGroup {
 }
 
 impl EditorCommand for CommandGroup {
-    fn execute(&self, world: &mut World) {
-        for cmd in &self.commands {
+    fn execute(&mut self, world: &mut World) {
+        for cmd in &mut self.commands {
             cmd.execute(world);
         }
     }
 
-    fn undo(&self, world: &mut World) {
-        for cmd in self.commands.iter().rev() {
+    fn undo(&mut self, world: &mut World) {
+        for cmd in self.commands.iter_mut().rev() {
             cmd.undo(world);
         }
     }
