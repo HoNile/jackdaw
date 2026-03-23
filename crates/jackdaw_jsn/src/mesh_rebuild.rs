@@ -89,7 +89,7 @@ pub fn rebuild_brush_meshes(
 
         let mesh_handle = meshes.add(mesh);
 
-        let grid_bytes = include_bytes!("../../../assets/textures/jd_grid.png");
+        let grid_bytes = include_bytes!("../assets/jd_grid.png");
         let grid_image = Image::from_buffer(
             grid_bytes,
             ImageType::Extension("png"),

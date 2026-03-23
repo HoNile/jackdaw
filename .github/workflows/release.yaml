@@ -50,11 +50,13 @@ jobs:
             jackdaw_terrain
             jackdaw_jsn
             jackdaw_feathers
+            jackdaw_bsn
+            jackdaw_remote
           )
 
           for crate in "${crates[@]}"; do
             echo "::group::Publishing $crate"
-            cargo publish -p "$crate" --locked
+            cargo publish -p "$crate" --locked || echo "::warning::$crate publish failed (may already exist)"
             echo "::endgroup::"
             # Give the crates.io index time to update
             sleep 30
