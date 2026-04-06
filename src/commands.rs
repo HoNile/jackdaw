@@ -176,7 +176,12 @@ pub struct AddComponent {
 }
 
 impl AddComponent {
-    pub fn new(entity: Entity, type_id: TypeId, component_id: ComponentId, type_path: String) -> Self {
+    pub fn new(
+        entity: Entity,
+        type_id: TypeId,
+        component_id: ComponentId,
+        type_path: String,
+    ) -> Self {
         Self {
             entity,
             type_id,
@@ -574,11 +579,7 @@ fn apply_jsn_field_to_ecs(
         let deserializer =
             bevy::reflect::serde::TypedReflectDeserializer::new(registration, &registry);
         if let Ok(reflected) = deserializer.deserialize(value) {
-            reflect_component.insert(
-                &mut world.entity_mut(entity),
-                reflected.as_ref(),
-                &registry,
-            );
+            reflect_component.insert(&mut world.entity_mut(entity), reflected.as_ref(), &registry);
         }
     } else {
         // Field-level update via reflect_path_mut
@@ -732,7 +733,11 @@ pub fn sync_required_to_ast(world: &mut World, entity: Entity) -> Vec<String> {
         if skip_ids.contains(&registration.type_id()) {
             continue;
         }
-        let type_path = registration.type_info().type_path_table().path().to_string();
+        let type_path = registration
+            .type_info()
+            .type_path_table()
+            .path()
+            .to_string();
         if existing.contains(&type_path) {
             continue;
         }

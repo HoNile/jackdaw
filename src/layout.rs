@@ -85,7 +85,6 @@ pub enum EditToolButton {
 #[derive(Component)]
 pub struct ToolbarTooltip(pub String);
 
-
 /// Marker for keybind helper button
 #[derive(Component)]
 pub struct KeybindHelpButton;

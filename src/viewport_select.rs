@@ -96,10 +96,7 @@ pub(crate) fn handle_viewport_click(
         || gizmo_drag.active
         || modal.active.is_some()
         || vp_drag.active.is_some()
-        || matches!(
-            *edit_mode,
-            crate::brush::EditMode::BrushEdit(_)
-        )
+        || matches!(*edit_mode, crate::brush::EditMode::BrushEdit(_))
         || draw_state.active.is_some()
         || matches!(
             *terrain_edit_mode,
@@ -220,7 +217,20 @@ pub(crate) fn handle_viewport_click(
         last_click.time = now;
 
         let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-        if ctrl {
+        let in_physics_mode = *edit_mode == crate::brush::EditMode::Physics;
+
+        if in_physics_mode {
+            // In Physics mode: clicking an already-selected entity is a drag
+            // start, NOT a re-select. Only modify selection for unselected
+            // entities (add them). This preserves multi-selection.
+            if !selection.is_selected(entity) {
+                if ctrl {
+                    selection.toggle(&mut commands, entity);
+                } else {
+                    selection.select_single(&mut commands, entity);
+                }
+            }
+        } else if ctrl {
             selection.toggle(&mut commands, entity);
         } else {
             selection.select_single(&mut commands, entity);

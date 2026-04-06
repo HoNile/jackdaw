@@ -51,9 +51,7 @@ struct PreviousEditMode(EditMode);
 /// Detect when EditMode changes to/from Physics and run entry/exit logic.
 fn on_edit_mode_transition(world: &mut World) {
     let edit_mode = *world.resource::<EditMode>();
-    let prev = world
-        .get_resource_or_init::<PreviousEditMode>()
-        .0;
+    let prev = world.get_resource_or_init::<PreviousEditMode>().0;
 
     if edit_mode == prev {
         return;
@@ -114,7 +112,10 @@ fn enter_physics_tool(world: &mut World) {
             continue;
         }
         if !is_selected {
-            world.resource_mut::<PhysicsToolState>().disabled_by_us.insert(entity);
+            world
+                .resource_mut::<PhysicsToolState>()
+                .disabled_by_us
+                .insert(entity);
             if let Ok(mut ec) = world.get_entity_mut(entity) {
                 ec.insert(RigidBodyDisabled);
             }
@@ -206,7 +207,10 @@ fn physics_tool_drag(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform), With<crate::viewport::MainViewportCamera>>,
-    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<crate::viewport::SceneViewport>>,
+    viewport_query: Query<
+        (&ComputedNode, &UiGlobalTransform),
+        With<crate::viewport::SceneViewport>,
+    >,
     selection: Res<Selection>,
     parents: Query<&ChildOf>,
     mut tool_state: ResMut<PhysicsToolState>,
@@ -225,7 +229,9 @@ fn physics_tool_drag(
         warn!("Physics drag: no single window");
         return;
     };
-    let Some(cursor_pos) = window.cursor_position() else { return }; // silent — cursor off window
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    }; // silent — cursor off window
     let Ok((camera, cam_tf)) = camera_query.single() else {
         warn!("Physics drag: no single Camera3d");
         return;
@@ -279,7 +285,9 @@ fn physics_tool_drag(
             }
 
             let hit_point = hit_data.point;
-            let Ok(entity_tf) = transforms.get(root) else { continue };
+            let Ok(entity_tf) = transforms.get(root) else {
+                continue;
+            };
 
             let plane_normal = cam_tf.forward().as_vec3();
             let grab_offset = entity_tf.translation - hit_point;
@@ -331,10 +339,7 @@ fn physics_tool_drag(
 }
 
 /// Space/Escape: commit & exit to Object mode.
-fn physics_tool_keys(
-    mut edit_mode: ResMut<EditMode>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-) {
+fn physics_tool_keys(mut edit_mode: ResMut<EditMode>, keyboard: Res<ButtonInput<KeyCode>>) {
     if *edit_mode != EditMode::Physics {
         return;
     }
@@ -346,10 +351,7 @@ fn physics_tool_keys(
 /// Diff snapshots vs current transforms, push one undoable `CommandGroup`
 /// of `SetJsnField` commands.
 fn commit_physics_transforms(world: &mut World) {
-    let snapshots = world
-        .resource::<PhysicsToolState>()
-        .snapshots
-        .clone();
+    let snapshots = world.resource::<PhysicsToolState>().snapshots.clone();
 
     if snapshots.is_empty() {
         return;
@@ -362,8 +364,12 @@ fn commit_physics_transforms(world: &mut World) {
     let mut sub_commands: Vec<Box<dyn EditorCommand>> = Vec::new();
 
     for (entity, old_tf) in &snapshots {
-        let Ok(entity_ref) = world.get_entity(*entity) else { continue };
-        let Some(new_tf) = entity_ref.get::<Transform>().copied() else { continue };
+        let Ok(entity_ref) = world.get_entity(*entity) else {
+            continue;
+        };
+        let Some(new_tf) = entity_ref.get::<Transform>().copied() else {
+            continue;
+        };
 
         // Skip if unchanged
         let pos_diff = (old_tf.translation - new_tf.translation).length_squared();
@@ -376,11 +382,15 @@ fn commit_physics_transforms(world: &mut World) {
         let old_ser = bevy::reflect::serde::TypedReflectSerializer::with_processor(
             old_tf, &registry, &processor,
         );
-        let Ok(old_json) = serde_json::to_value(&old_ser) else { continue };
+        let Ok(old_json) = serde_json::to_value(&old_ser) else {
+            continue;
+        };
         let new_ser = bevy::reflect::serde::TypedReflectSerializer::with_processor(
             &new_tf, &registry, &processor,
         );
-        let Ok(new_json) = serde_json::to_value(&new_ser) else { continue };
+        let Ok(new_json) = serde_json::to_value(&new_ser) else {
+            continue;
+        };
         drop(registry);
 
         sub_commands.push(Box::new(SetJsnField {

@@ -36,7 +36,6 @@ pub mod physics_colors {
     pub const COLLIDER_HIERARCHY_ARROW: Color = Color::srgba(0.4, 0.7, 1.0, 0.6);
 }
 
-
 #[derive(Resource)]
 pub struct PhysicsOverlayConfig {
     pub show_colliders: bool,
@@ -66,7 +65,9 @@ pub struct PhysicsOverlaysPlugin<S: Component> {
 
 impl<S: Component> Default for PhysicsOverlaysPlugin<S> {
     fn default() -> Self {
-        Self { _marker: PhantomData }
+        Self {
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -167,7 +168,12 @@ fn draw_collider_gizmos<S: Component>(
     // Collect highlighted colliders (belonging to a selected rigid body)
     let mut highlighted = bevy::ecs::entity::EntityHashSet::default();
     for body_entity in &selected_bodies {
-        collect_descendant_colliders(body_entity, &children_query, &collider_check, &mut highlighted);
+        collect_descendant_colliders(
+            body_entity,
+            &children_query,
+            &collider_check,
+            &mut highlighted,
+        );
         if collider_check.contains(body_entity) {
             highlighted.insert(body_entity);
         }
@@ -187,7 +193,13 @@ fn draw_collider_gizmos<S: Component>(
         };
 
         let transform = tf.compute_transform();
-        draw_parry_shape(&mut gizmos, collider.shape(), transform.translation, transform.rotation, color);
+        draw_parry_shape(
+            &mut gizmos,
+            collider.shape(),
+            transform.translation,
+            transform.rotation,
+            color,
+        );
     }
 }
 
@@ -243,7 +255,11 @@ fn draw_parry_shape(
             let right = rot * Vec3::X;
             let fwd = rot * Vec3::Z;
             for dir in [right, -right, fwd, -fwd] {
-                gizmos.line(pos + dir * r + up * half_h, pos + dir * r - up * half_h, color);
+                gizmos.line(
+                    pos + dir * r + up * half_h,
+                    pos + dir * r - up * half_h,
+                    color,
+                );
             }
         }
         TypedShape::Cone(cone) => {
@@ -299,7 +315,11 @@ fn draw_parry_shape(
                 color,
             );
             for dir in [right, -right, fwd, -fwd] {
-                gizmos.line(pos + dir * r + up * half_h, pos + dir * r - up * half_h, color);
+                gizmos.line(
+                    pos + dir * r + up * half_h,
+                    pos + dir * r - up * half_h,
+                    color,
+                );
             }
         }
         TypedShape::TriMesh(trimesh) => {
@@ -382,9 +402,18 @@ fn draw_box_wireframe(
         Vec3::new(-half.x, half.y, half.z),
     ];
     let edges = [
-        (0, 1), (1, 2), (2, 3), (3, 0),
-        (4, 5), (5, 6), (6, 7), (7, 4),
-        (0, 4), (1, 5), (2, 6), (3, 7),
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 0),
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 4),
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),
     ];
     for (a, b) in edges {
         gizmos.line(pos + rot * corners[a], pos + rot * corners[b], color);
@@ -406,7 +435,12 @@ fn draw_hierarchy_arrows<S: Component>(
     for (body_entity, body_tf) in &selected_bodies {
         let body_pos = body_tf.translation();
         let mut descendants = bevy::ecs::entity::EntityHashSet::default();
-        collect_descendant_colliders(body_entity, &children_query, &collider_check, &mut descendants);
+        collect_descendant_colliders(
+            body_entity,
+            &children_query,
+            &collider_check,
+            &mut descendants,
+        );
 
         for collider_entity in &descendants {
             if *collider_entity == body_entity {
@@ -438,4 +472,3 @@ fn collect_descendant_colliders(
         }
     }
 }
-

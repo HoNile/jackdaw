@@ -1118,9 +1118,7 @@ fn build_scene_snapshot(
             }
 
             if skipped_derived > 0 {
-                info!(
-                    "Scene save: entity {entity} — skipped {skipped_derived} derived components"
-                );
+                info!("Scene save: entity {entity} — skipped {skipped_derived} derived components");
             }
 
             JsnEntity { parent, components }

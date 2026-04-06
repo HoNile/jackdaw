@@ -134,9 +134,9 @@ impl Plugin for EditorPlugin {
                 prefab_picker::PrefabPickerPlugin,
                 remote::RemoteConnectionPlugin,
             ))
-            .add_plugins(
-                jackdaw_avian_integration::PhysicsOverlaysPlugin::<selection::Selected>::new(),
-            )
+            .add_plugins(jackdaw_avian_integration::PhysicsOverlaysPlugin::<
+                selection::Selected,
+            >::new())
             .add_plugins(jackdaw_avian_integration::simulation::PhysicsSimulationPlugin)
             .add_plugins(physics_brush_bridge::PhysicsBrushBridgePlugin)
             .add_plugins(physics_tool::PhysicsToolPlugin)
@@ -483,15 +483,15 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
         }
         "view.collider_gizmos" => {
             commands.queue(|world: &mut World| {
-                let mut config = world
-                    .resource_mut::<jackdaw_avian_integration::PhysicsOverlayConfig>();
+                let mut config =
+                    world.resource_mut::<jackdaw_avian_integration::PhysicsOverlayConfig>();
                 config.show_colliders = !config.show_colliders;
             });
         }
         "view.hierarchy_arrows" => {
             commands.queue(|world: &mut World| {
-                let mut config = world
-                    .resource_mut::<jackdaw_avian_integration::PhysicsOverlayConfig>();
+                let mut config =
+                    world.resource_mut::<jackdaw_avian_integration::PhysicsOverlayConfig>();
                 config.show_hierarchy_arrows = !config.show_hierarchy_arrows;
             });
         }

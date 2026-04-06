@@ -1751,9 +1751,13 @@ pub(crate) fn refresh_enum_variants(
     // entity, never a UI container.
     entity_query: Query<bevy::ecs::world::EntityRef, Without<super::EnumVariantHost>>,
 ) {
-    let Some(primary) = selection.primary() else { return };
+    let Some(primary) = selection.primary() else {
+        return;
+    };
     let registry_guard = type_registry.read();
-    let Ok(entity_ref) = entity_query.get(primary) else { return };
+    let Ok(entity_ref) = entity_query.get(primary) else {
+        return;
+    };
 
     for (container, mut host, children) in &mut hosts {
         if host.source_entity != primary {
@@ -1780,7 +1784,9 @@ pub(crate) fn refresh_enum_variants(
             field
         };
 
-        let ReflectRef::Enum(e) = enum_partial.reflect_ref() else { continue };
+        let ReflectRef::Enum(e) = enum_partial.reflect_ref() else {
+            continue;
+        };
         if e.variant_name() == host.current_variant {
             continue;
         }
@@ -2028,8 +2034,12 @@ pub(super) fn spawn_variant_contents(
     icon_font: &Handle<Font>,
 ) {
     // Variant names + current selected index come straight from reflect.
-    let Some(type_info) = enum_ref.get_represented_type_info() else { return };
-    let bevy::reflect::TypeInfo::Enum(enum_info) = type_info else { return };
+    let Some(type_info) = enum_ref.get_represented_type_info() else {
+        return;
+    };
+    let bevy::reflect::TypeInfo::Enum(enum_info) = type_info else {
+        return;
+    };
 
     let variant_names: Vec<String> = enum_info
         .variant_names()
@@ -2065,13 +2075,7 @@ pub(super) fn spawn_variant_contents(
                 let path = field_path_for_observer.clone();
                 let tp = type_path_for_observer.clone();
                 commands.queue(move |world: &mut World| {
-                    apply_enum_variant_with_undo(
-                        world,
-                        source_entity,
-                        &tp,
-                        &path,
-                        &variant_name,
-                    );
+                    apply_enum_variant_with_undo(world, source_entity, &tp, &path, &variant_name);
                 });
             },
         );
@@ -2079,7 +2083,9 @@ pub(super) fn spawn_variant_contents(
     // Spawn a row for each field of the current variant
     let variant_field_count = enum_ref.field_len();
     for i in 0..variant_field_count {
-        let Some(field_value) = enum_ref.field_at(i) else { continue };
+        let Some(field_value) = enum_ref.field_at(i) else {
+            continue;
+        };
         let field_name = enum_ref
             .name_at(i)
             .map(|n| n.to_string())
@@ -2209,11 +2215,7 @@ fn build_variant_default_json(
     variant_name: &str,
     registry: &bevy::reflect::TypeRegistry,
 ) -> Option<serde_json::Value> {
-    use bevy::reflect::{
-        VariantInfo,
-        prelude::ReflectDefault,
-        serde::TypedReflectSerializer,
-    };
+    use bevy::reflect::{VariantInfo, prelude::ReflectDefault, serde::TypedReflectSerializer};
 
     let variant = enum_info.variant(variant_name)?;
 
