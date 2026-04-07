@@ -32,6 +32,8 @@ pub struct GridSettings {
     pub scale: f32,
     pub major_line_color: Color,
     pub minor_line_color: Color,
+    pub x_axis_color: Color,
+    pub z_axis_color: Color,
     pub fadeout_distance: f32,
 }
 
@@ -42,6 +44,8 @@ impl Default for GridSettings {
             scale: 4.0,
             major_line_color: colors::GRID_MAJOR_LINE,
             minor_line_color: colors::GRID_MINOR_LINE,
+            x_axis_color: colors::AXIS_X,
+            z_axis_color: colors::AXIS_Z,
             fadeout_distance: 100.0,
         }
     }
@@ -64,6 +68,8 @@ fn sync_grid_settings(
         settings.scale = grid.scale;
         settings.major_line_color = grid.major_line_color;
         settings.minor_line_color = grid.minor_line_color;
+        settings.x_axis_color = grid.x_axis_color;
+        settings.z_axis_color = grid.z_axis_color;
         settings.fadeout_distance = grid.fadeout_distance;
         *visibility = if grid.visible {
             Visibility::Inherited
