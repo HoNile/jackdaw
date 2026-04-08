@@ -250,7 +250,7 @@ pub fn text_edit(props: TextEditProps) -> impl Bundle {
         max,
         allow_empty,
         drag_bottom,
-        grow,
+        grow: _,
     } = props;
 
     (
@@ -357,6 +357,8 @@ fn setup_text_edit_input(
 
         if is_numeric && !config.drag_bottom {
             const HITBOX_WIDTH: f32 = INPUT_HEIGHT * 0.9;
+            // Position hitbox after the prefix (if any) so it doesn't overlap
+            let hitbox_left = if has_prefix { AFFIX_SIZE as f32 } else { 0.0 };
             let hitbox = commands
                 .spawn((
                     DragHitbox::default(),
@@ -364,7 +366,7 @@ fn setup_text_edit_input(
                         position_type: PositionType::Absolute,
                         width: px(HITBOX_WIDTH),
                         height: px(INPUT_HEIGHT),
-                        left: px(0),
+                        left: px(hitbox_left),
                         ..default()
                     },
                     ZIndex(10),

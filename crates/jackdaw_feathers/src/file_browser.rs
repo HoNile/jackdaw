@@ -102,7 +102,7 @@ pub fn file_browser_list_item(item: &FileBrowserItem, icon_font: &IconFont) -> i
     )
 }
 
-fn file_icon(name: &str) -> Icon {
+pub fn file_icon(name: &str) -> Icon {
     // Check for compound extensions first
     if name.ends_with(".template.json") {
         return Icon::LayoutTemplate;

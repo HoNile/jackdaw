@@ -390,8 +390,9 @@ fn project_files_panel() -> impl Bundle {
                     ),
                 )],
             ),
-            // File tree content (placeholder — to be populated by a file browser system)
+            // File tree content — populated by ProjectFilesPlugin
             (
+                crate::project_files::ProjectFilesTree,
                 EditorEntity,
                 Node {
                     flex_direction: FlexDirection::Column,
