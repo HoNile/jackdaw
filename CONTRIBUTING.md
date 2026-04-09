@@ -51,7 +51,7 @@ cargo doc --workspace --no-deps
 ## Pull Requests
 
 1. Fork the repository and create a feature branch from `main`
-2. Keep changes focused - one feature or fix per PR please!
+2. Keep changes focused if possible, but chat to me on discord if you want more overarching changes!
 3. Make sure all checks above pass
 4. Open a PR against `main` with a clear description of what changed and why
 

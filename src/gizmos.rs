@@ -26,12 +26,11 @@ const SCALE_CUBE_SIZE: f32 = 0.07;
 /// World units per unit of camera distance. Controls the gizmo's constant screen-space size.
 const GIZMO_SCREEN_SCALE: f32 = 0.1;
 const INACTIVE_ALPHA: f32 = 0.15;
-
-const TRANSLATE_SENSITIVITY: f32 = 0.003;
 const ROTATE_SENSITIVITY: f32 = 0.01;
 const SCALE_SENSITIVITY: f32 = 0.005;
 const MIN_SCALE: f32 = 0.01;
 const AXIS_HIT_DISTANCE: f32 = 35.0;
+const EPSILON: f32 = 1e-6;
 
 #[derive(Resource, Default, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum GizmoMode {
@@ -342,24 +341,32 @@ fn handle_gizmo_drag(
 
         match *mode {
             GizmoMode::Translate => {
+                let drag_start_pos = drag_state.start_transform.translation;
+
                 // Project mouse movement onto axis in screen space
-                let Some(origin_screen) = camera.world_to_viewport(cam_tf, gizmo_pos).ok() else {
-                    return;
-                };
-                let Some(axis_screen) = camera.world_to_viewport(cam_tf, gizmo_pos + axis_dir).ok()
+                let Some(origin_screen) = camera.world_to_viewport(cam_tf, drag_start_pos).ok()
                 else {
                     return;
                 };
-                let screen_axis = (axis_screen - origin_screen).normalize_or_zero();
-                let mouse_delta = viewport_cursor - drag_state.drag_start_screen;
-                let projected = mouse_delta.dot(screen_axis);
+                let Some(axis_screen) = camera
+                    .world_to_viewport(cam_tf, drag_start_pos + axis_dir)
+                    .ok()
+                else {
+                    return;
+                };
+                let screen_axis = axis_screen - origin_screen;
+                let len_sq = screen_axis.length_squared();
 
-                // Scale by distance to camera for consistent feel
-                let cam_dist = (cam_tf.translation() - gizmo_pos).length();
-                let scale = cam_dist * TRANSLATE_SENSITIVITY;
+                //prevents divide by 0 when screen axis is tiny
+                if len_sq < EPSILON {
+                    return;
+                }
+
+                let mouse_delta = viewport_cursor - drag_state.drag_start_screen;
+                let projected = mouse_delta.dot(screen_axis) / len_sq;
 
                 let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-                let raw_delta = axis_dir * projected * scale;
+                let raw_delta = axis_dir * projected;
                 let snapped_delta = snap_settings.snap_translate_vec3_if(raw_delta, ctrl);
                 transform.translation = drag_state.start_transform.translation + snapped_delta;
             }

@@ -63,8 +63,8 @@ pub const NAVMESH_AREA_3: Color = Color::srgba(0.4, 0.0, 0.8, 0.25);
 pub const NAVMESH_AREA_DEFAULT: Color = Color::srgba(0.5, 0.5, 0.5, 0.25);
 
 // ── Grid ──
-pub const GRID_MAJOR_LINE: Color = Color::srgb(0.25, 0.25, 0.25);
-pub const GRID_MINOR_LINE: Color = Color::srgb(0.1, 0.1, 0.1);
+pub const GRID_MAJOR_LINE: Color = Color::srgb(0.3, 0.3, 0.3);
+pub const GRID_MINOR_LINE: Color = Color::srgb(0.25, 0.25, 0.25);
 
 // ── Terrain ──
 pub const TERRAIN_SCULPT_GIZMO: Color = Color::srgb(1.0, 0.8, 0.2);

@@ -5,7 +5,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
     ui::{UiGlobalTransform, widget::ViewportNode},
 };
-use bevy_infinite_grid::InfiniteGridPlugin;
+use bevy_infinite_grid::{InfiniteGridBundle, InfiniteGridPlugin};
 use jackdaw_camera::{JackdawCameraPlugin, JackdawCameraSettings};
 
 use bevy::ecs::system::SystemParam;
@@ -117,10 +117,7 @@ pub(crate) fn setup_viewport(
         .id();
 
     // Spawn infinite grid (marked EditorEntity so it's hidden from hierarchy and undeletable)
-    commands.spawn((
-        crate::EditorEntity,
-        bevy_infinite_grid::InfiniteGridBundle::default(),
-    ));
+    commands.spawn((crate::EditorEntity, InfiniteGridBundle::default()));
 
     // Attach ViewportNode to the SceneViewport UI entity
     commands
