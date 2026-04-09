@@ -56,7 +56,7 @@ fn entity_by_stable_id(world: &mut World, id: BrushStableId) -> Option<Entity> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DrawPhase {
+pub(crate) enum DrawPhase {
     PlacingFirstCorner,
     DrawingFootprint,
     DrawingRotatedWidth,
@@ -65,14 +65,14 @@ pub enum DrawPhase {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum DrawMode {
+pub(crate) enum DrawMode {
     #[default]
     Add,
     Cut,
 }
 
 #[derive(Clone, Debug)]
-pub struct DrawPlane {
+pub(crate) struct DrawPlane {
     pub origin: Vec3,
     pub normal: Vec3,
     pub axis_u: Vec3,
@@ -80,7 +80,7 @@ pub struct DrawPlane {
 }
 
 #[derive(Clone, Debug)]
-pub struct ActiveDraw {
+pub(crate) struct ActiveDraw {
     pub corner1: Vec3,
     pub corner2: Vec3,
     pub depth: f32,
@@ -108,13 +108,13 @@ pub struct ActiveDraw {
 }
 
 #[derive(Resource, Default)]
-pub struct DrawBrushState {
-    pub active: Option<ActiveDraw>,
+pub(crate) struct DrawBrushState {
+    pub(crate) active: Option<ActiveDraw>,
 }
 
 /// Minimal data needed to respawn a brush entity.
 #[derive(Clone)]
-pub struct BrushData {
+pub(crate) struct BrushData {
     stable_id: BrushStableId,
     brush: Brush,
     transform: Transform,
@@ -136,7 +136,7 @@ enum BrushOrGroup {
 }
 
 /// Read brush data from an existing entity. Lazily assigns a `BrushStableId` if missing.
-pub fn brush_data_from_entity(world: &mut World, entity: Entity) -> BrushData {
+pub(crate) fn brush_data_from_entity(world: &mut World, entity: Entity) -> BrushData {
     // Ensure the entity has a stable ID
     let stable_id = if let Some(sid) = world.get::<BrushStableId>(entity) {
         *sid
@@ -230,7 +230,7 @@ fn spawn_brush_or_group(world: &mut World, data: &BrushOrGroup) -> Entity {
     }
 }
 
-pub struct CreateBrushCommand {
+pub(crate) struct CreateBrushCommand {
     pub data: BrushData,
 }
 
@@ -262,12 +262,12 @@ pub struct DrawBrushPlugin;
 struct DrawPreviewMesh;
 
 #[derive(Component)]
-pub struct CutResultPreviewMesh;
+pub(crate) struct CutResultPreviewMesh;
 
 /// Per-face data attached to each [`CutResultPreviewMesh`] so the face-grid
 /// gizmo systems can render edges and grid lines on cut-preview fragments.
 #[derive(Component)]
-pub struct CutPreviewFace {
+pub(crate) struct CutPreviewFace {
     pub world_vertices: Vec<Vec3>,
     pub world_normal: Vec3,
     pub is_default_material: bool,
@@ -276,7 +276,7 @@ pub struct CutPreviewFace {
 
 /// Marker for brush face entities hidden during cut preview.
 #[derive(Component)]
-pub struct CutPreviewHidden;
+pub(crate) struct CutPreviewHidden;
 
 impl Plugin for DrawBrushPlugin {
     fn build(&self, app: &mut App) {
@@ -463,12 +463,12 @@ fn draw_brush_update(
 
                             let dist = hit_data.distance;
                             if dist < best_distance - 0.01 {
-                                // Clearly closer — take it
+                                // Clearly closer, take it.
                                 best_hit = Some((hit_data.point, world_normal));
                                 best_distance = dist;
                                 best_facing = camera_facing;
                             } else if dist < best_distance + 0.01 && camera_facing > best_facing {
-                                // Within tolerance — prefer more camera-facing
+                                // Within tolerance, prefer more camera-facing.
                                 best_hit = Some((hit_data.point, world_normal));
                                 best_facing = camera_facing;
                                 best_distance = best_distance.min(dist);
@@ -478,7 +478,7 @@ fn draw_brush_update(
                 }
 
                 if let Some((hit_point, world_normal)) = best_hit {
-                    // Face identified — update plane and cache hit point
+                    // Face identified, update plane and cache hit point.
                     active.cached_face_hit = Some(hit_point);
                     let (u, v) = compute_face_tangent_axes(world_normal);
                     let plane = DrawPlane {
@@ -504,7 +504,7 @@ fn draw_brush_update(
                         let last_hit = active.cached_face_hit.unwrap();
                         let dist = projected.distance(last_hit);
                         if dist > 2.0 {
-                            // Cursor has moved well beyond the face — fall back to ground
+                            // Cursor has moved well beyond the face, fall back to ground.
                             active.cached_face_hit = None;
                             if let Some(ground_hit) =
                                 ray_plane_intersection(ray, Vec3::ZERO, Vec3::Y)
@@ -521,7 +521,7 @@ fn draw_brush_update(
                         // else: keep using cached face plane (cursor still near face)
                     }
                 } else {
-                    // Never been on a face — fall back to Y=0 ground plane
+                    // Never been on a face, fall back to Y=0 ground plane.
                     if let Some(ground_hit) = ray_plane_intersection(ray, Vec3::ZERO, Vec3::Y) {
                         let snapped_origin = snap_settings.snap_translate_vec3(ground_hit);
                         active.plane = DrawPlane {
@@ -1253,7 +1253,7 @@ fn append_to_brush(active: &ActiveDraw, commands: &mut Commands) {
                     ..default()
                 }
             } else {
-                // New face from the appended shape — use last-used material
+                // New face from the appended shape, use last-used material.
                 let (u, v) = compute_face_tangent_axes(hull_face.normal);
                 BrushFaceData {
                     plane: BrushPlane {
@@ -1306,7 +1306,7 @@ fn ray_plane_intersection(ray: Ray3d, plane_point: Vec3, plane_normal: Vec3) -> 
 
 /// Draw a grid of small crosses on the drawing plane, centered near `center`.
 /// Grid points are world-aligned (fixed at world-space multiples of `inc`),
-/// so only the visible window moves with the cursor — individual crosses stay put.
+/// so only the visible window moves with the cursor. Individual crosses stay put.
 fn draw_plane_grid(
     gizmos: &mut Gizmos<DrawBrushGizmoGroup>,
     plane: &DrawPlane,
@@ -1691,7 +1691,7 @@ fn manage_draw_preview_mesh(
         }),
     };
 
-    // Despawn old preview meshes (do NOT restore hidden faces — they stay hidden while cut is active)
+    // Despawn old preview meshes (do NOT restore hidden faces, they stay hidden while cut is active).
     for entity in preview_query.iter() {
         commands.entity(entity).despawn();
     }
@@ -2290,8 +2290,8 @@ fn join_selected_brushes(
     commands.queue(join_selected_brushes_impl);
 }
 
-/// Core logic for Join (convex merge) — callable from both keyboard shortcut and menu.
-pub fn join_selected_brushes_impl(world: &mut World) {
+/// Core logic for Join (convex merge). Callable from both keyboard shortcut and menu.
+pub(crate) fn join_selected_brushes_impl(world: &mut World) {
     let candidates: Vec<Entity> = world.resource::<Selection>().entities.clone();
     let mut brush_query = world.query::<&Brush>();
     let selected_brushes: Vec<Entity> = candidates
@@ -2524,8 +2524,8 @@ fn csg_subtract_selected(
     commands.queue(csg_subtract_selected_impl);
 }
 
-/// Core logic for CSG Subtract — selected brushes are cutters, non-selected are targets.
-pub fn csg_subtract_selected_impl(world: &mut World) {
+/// Core logic for CSG Subtract. Selected brushes are cutters, non-selected are targets.
+pub(crate) fn csg_subtract_selected_impl(world: &mut World) {
     let selection = world.resource::<Selection>();
     let selected_set: Vec<Entity> = selection.entities.clone();
 
@@ -2797,8 +2797,8 @@ fn csg_intersect_selected(
     commands.queue(csg_intersect_selected_impl);
 }
 
-/// Core logic for CSG Intersect — replaces all selected brushes with their intersection.
-pub fn csg_intersect_selected_impl(world: &mut World) {
+/// Core logic for CSG Intersect. Replaces all selected brushes with their intersection.
+pub(crate) fn csg_intersect_selected_impl(world: &mut World) {
     let selection = world.resource::<Selection>();
     let selected_set: Vec<Entity> = selection.entities.clone();
 
@@ -2897,7 +2897,7 @@ pub fn csg_intersect_selected_impl(world: &mut World) {
     }
     world.entity_mut(entity).insert(Selected);
 
-    // Push undo command (reuses SubtractBrushCommand — same undo/redo pattern)
+    // Push undo command (reuses SubtractBrushCommand, same undo/redo pattern).
     let cmd = SubtractBrushCommand {
         originals,
         fragments: vec![BrushOrGroup::Single(brush_data)],
@@ -3047,7 +3047,7 @@ fn find_hovered_face_on_brush(
 /// Removes the specified face from the primary brush, adds all target brush faces,
 /// then computes the intersection. The result is the primary brush reshaped to
 /// conform to the target brushes in the direction of the removed face.
-pub fn extend_face_to_brush_impl(
+pub(crate) fn extend_face_to_brush_impl(
     world: &mut World,
     primary: Entity,
     targets: &[Entity],

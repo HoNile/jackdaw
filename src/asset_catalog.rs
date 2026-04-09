@@ -8,7 +8,7 @@ use jackdaw_jsn::format::{JsnAssets, JsnCatalog, JsnHeader};
 ///
 /// Assets in the catalog are referenced with `@Name` prefix in scene files,
 /// while scene-local inline assets use `#Name`. When multiple scenes reference
-/// the same `@Name`, they share the same handle — zero duplication.
+/// the same `@Name`, they share the same handle (zero duplication).
 #[derive(Resource, Default)]
 pub struct AssetCatalog {
     /// `@Name` -> loaded UntypedHandle (populated at project open).
@@ -22,8 +22,8 @@ pub struct AssetCatalog {
 }
 
 impl AssetCatalog {
-    /// Insert a runtime handle into the catalog (does not mark dirty — use
-    /// [`add_to_catalog_assets`] to persist new serializable data).
+    /// Insert a runtime handle into the catalog. Does not mark dirty; use
+    /// [`add_to_catalog_assets`] to persist new serializable data.
     pub fn insert(&mut self, name: String, handle: UntypedHandle) {
         self.id_to_name.insert(handle.id(), name.clone());
         self.handles.insert(name, handle);
@@ -40,12 +40,12 @@ impl AssetCatalog {
 pub fn load_catalog(world: &mut World) {
     let catalog_path = catalog_file_path(world);
     let Some(catalog_path) = catalog_path else {
-        info!("No project root — skipping catalog load");
+        info!("No project root, skipping catalog load");
         return;
     };
 
     if !catalog_path.exists() {
-        info!("No catalog.jsn found — starting with empty catalog");
+        info!("No catalog.jsn found, starting with empty catalog");
         return;
     }
 
@@ -160,7 +160,7 @@ fn catalog_file_path(world: &World) -> Option<std::path::PathBuf> {
     Some(new_path)
 }
 
-/// Always returns `.jsn/catalog.jsn` — saves always go to the new location.
+/// Always returns `.jsn/catalog.jsn`. Saves always go to the new location.
 fn catalog_save_path(world: &World) -> Option<std::path::PathBuf> {
     let project = world.get_resource::<crate::project::ProjectRoot>()?;
     Some(project.jsn_dir().join("catalog.jsn"))

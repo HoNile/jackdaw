@@ -110,7 +110,7 @@ pub fn update_connection_status_indicator(
     }
 }
 
-/// Handle clicks on the connection indicator — toggle connection popover.
+/// Handle clicks on the connection indicator. Toggles connection popover.
 pub fn on_connection_indicator_click(
     trigger: On<Pointer<Click>>,
     indicators: Query<(), With<ConnectionIndicator>>,

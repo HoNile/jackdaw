@@ -484,7 +484,7 @@ fn draw_coordinate_indicator(
         gizmos.line(indicator_pos, indicator_pos + *axis * size, *color);
     }
 
-    // Update axis label positions — project world positions to UI overlay coordinates
+    // Update axis label positions. Project world positions to UI overlay coordinates.
     if let Some(label_entities) = label_entities {
         let vp_node_size = viewport_node
             .single()

@@ -322,7 +322,7 @@ fn handle_popover_dismiss(
     let any_hovered = popovers.iter().any(|(_, _, hovered)| hovered.get());
 
     for (entity, anchor, hovered) in &popovers {
-        // Don't dismiss on click if the anchor (trigger) is hovered —
+        // Don't dismiss on click if the anchor (trigger) is hovered,
         // let the anchor's click handler manage open/close toggling.
         if clicked && !esc_pressed {
             let anchor_is_hovered = anchor_hovered.get(anchor.0).is_ok_and(|h| h.get());

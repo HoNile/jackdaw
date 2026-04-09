@@ -89,7 +89,7 @@ fn camera_system(
             mouse_motion.read().count();
         }
 
-        // Scroll wheel — skip when Ctrl+Alt held (grid size shortcut) or Shift held (brush/grid resize)
+        // Scroll wheel: skip when Ctrl+Alt held (grid size shortcut) or Shift held (brush/grid resize)
         if (!ctrl || !alt) && !shift {
             for event in scroll_events.read() {
                 let delta = match event.unit {

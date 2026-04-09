@@ -12,11 +12,11 @@ use crate::snapping::SnapSettings;
 use crate::viewport_overlays::OverlaySettings;
 use crate::viewport_select::GroupEditState;
 
-/// Gizmo group for face grid lines — rendered slightly in front of geometry.
+/// Gizmo group for face grid lines. Rendered slightly in front of geometry.
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct FaceGridGizmoGroup;
 
-/// Gizmo group for brush edge wireframes — rendered in front of both geometry
+/// Gizmo group for brush edge wireframes. Rendered in front of both geometry
 /// and face grid lines to ensure edges are always clearly visible.
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct BrushEdgeGizmoGroup;
@@ -207,7 +207,7 @@ fn draw_face_grids(
         };
         for (face_idx, face_data) in brush.faces.iter().enumerate() {
             if face_data.material == Handle::default() {
-                continue; // Skip default-material faces — checkerboard provides its own structure
+                continue; // Skip default-material faces, checkerboard provides its own structure.
             }
             let Some(polygon_indices) = cache.face_polygons.get(face_idx) else {
                 continue;
@@ -469,7 +469,7 @@ fn clip_line_to_convex_polygon(
 
         let denom = b_coord - a_coord;
         let other = if denom.abs() < 1e-6 {
-            // Edge is parallel to the line — use both endpoints
+            // Edge is parallel to the line, use both endpoints.
             intersections.push(a_other);
             b_other
         } else {

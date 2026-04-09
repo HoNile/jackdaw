@@ -1,17 +1,15 @@
 use crate::colors;
 use crate::{
     EditorEntity,
-    gizmos::{GizmoDragState, GizmoHoverState, handle_gizmo_hover},
-    modal_transform::{ModalTransformState, ViewportDragState},
+    gizmos::handle_gizmo_hover,
     selection::Selection,
-    viewport::{MainViewportCamera, SceneViewport},
+    viewport::{InteractionGuards, ViewportCursor},
 };
 use bevy::input_focus::InputFocus;
 use bevy::{
     picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility},
     picking::prelude::Pickable,
     prelude::*,
-    ui::UiGlobalTransform,
 };
 use jackdaw_jsn::BrushGroup;
 
@@ -63,26 +61,14 @@ pub(crate) struct LastClick {
 pub(crate) fn handle_viewport_click(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
-    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
+    vp: ViewportCursor,
     scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
     parents: Query<&ChildOf>,
     brush_groups: Query<(), With<BrushGroup>>,
-    (gizmo_drag, gizmo_hover, modal, vp_drag): (
-        Res<GizmoDragState>,
-        Res<GizmoHoverState>,
-        Res<ModalTransformState>,
-        Res<ViewportDragState>,
-    ),
+    guards: InteractionGuards,
     mut selection: ResMut<Selection>,
     mut input_focus: ResMut<InputFocus>,
     mut commands: Commands,
-    (edit_mode, draw_state, terrain_edit_mode): (
-        Res<crate::brush::EditMode>,
-        Res<crate::draw_brush::DrawBrushState>,
-        Res<crate::terrain::TerrainEditMode>,
-    ),
     mut ray_cast: MeshRayCast,
     (mut group_edit, mut last_click, time): (ResMut<GroupEditState>, ResMut<LastClick>, Res<Time>),
 ) {
@@ -90,25 +76,25 @@ pub(crate) fn handle_viewport_click(
 
     // Don't select during gizmo drag, modal ops, viewport drag, brush edit mode, draw mode,
     // terrain sculpt mode, or shift+click (which starts box select).
-    // Physics mode IS allowed  -- the user needs to click-select entities to
+    // Physics mode IS allowed, the user needs to click-select entities to
     // drag them in the physics tool.
     if !mouse.just_pressed(MouseButton::Left)
         || shift
-        || gizmo_drag.active
-        || gizmo_hover.hovered_axis.is_some()
-        || modal.active.is_some()
-        || vp_drag.active.is_some()
-        || matches!(*edit_mode, crate::brush::EditMode::BrushEdit(_))
-        || draw_state.active.is_some()
+        || guards.gizmo_drag.active
+        || guards.gizmo_hover.hovered_axis.is_some()
+        || guards.modal.active.is_some()
+        || guards.viewport_drag.active.is_some()
+        || matches!(*guards.edit_mode, crate::brush::EditMode::BrushEdit(_))
+        || guards.draw_state.active.is_some()
         || matches!(
-            *terrain_edit_mode,
+            *guards.terrain_edit_mode,
             crate::terrain::TerrainEditMode::Sculpt(_)
         )
     {
         return;
     }
 
-    let Ok(window) = windows.single() else {
+    let Ok(window) = vp.windows.single() else {
         return;
     };
     let Some(cursor_pos) = window.cursor_position() else {
@@ -116,7 +102,7 @@ pub(crate) fn handle_viewport_click(
     };
 
     // Check if cursor is within viewport
-    let Ok((vp_computed, vp_tf)) = viewport_query.single() else {
+    let Ok((vp_computed, vp_tf)) = vp.viewport.single() else {
         return;
     };
     let scale = vp_computed.inverse_scale_factor();
@@ -135,7 +121,7 @@ pub(crate) fn handle_viewport_click(
     // Clear input focus so keyboard shortcuts (G/R/S) work after viewport click
     input_focus.0 = None;
 
-    let Ok((camera, cam_tf)) = camera_query.single() else {
+    let Ok((camera, cam_tf)) = vp.camera.single() else {
         return;
     };
 
@@ -219,7 +205,7 @@ pub(crate) fn handle_viewport_click(
         last_click.time = now;
 
         let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-        let in_physics_mode = *edit_mode == crate::brush::EditMode::Physics;
+        let in_physics_mode = *guards.edit_mode == crate::brush::EditMode::Physics;
 
         if in_physics_mode {
             // In Physics mode: clicking an already-selected entity is a drag
@@ -255,28 +241,24 @@ pub(crate) fn handle_viewport_click(
 fn handle_box_select(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    windows: Query<&Window>,
+    vp: ViewportCursor,
     mut box_state: ResMut<BoxSelectState>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
-    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
-    gizmo_drag: Res<GizmoDragState>,
-    edit_mode: Res<crate::brush::EditMode>,
-    draw_state: Res<crate::draw_brush::DrawBrushState>,
+    guards: InteractionGuards,
     scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Name>)>,
     mut selection: ResMut<Selection>,
     mut commands: Commands,
 ) {
     // Don't box-select during gizmo drag, brush edit mode, or draw mode.
     // Physics mode is allowed (same as Object for selection purposes).
-    if gizmo_drag.active
-        || matches!(*edit_mode, crate::brush::EditMode::BrushEdit(_))
-        || draw_state.active.is_some()
+    if guards.gizmo_drag.active
+        || matches!(*guards.edit_mode, crate::brush::EditMode::BrushEdit(_))
+        || guards.draw_state.active.is_some()
     {
         box_state.active = false;
         return;
     }
 
-    let Ok(window) = windows.single() else {
+    let Ok(window) = vp.windows.single() else {
         return;
     };
     let Some(cursor_pos) = window.cursor_position() else {
@@ -301,10 +283,10 @@ fn handle_box_select(
         if released {
             box_state.active = false;
 
-            let Ok((camera, cam_tf)) = camera_query.single() else {
+            let Ok((camera, cam_tf)) = vp.camera.single() else {
                 return;
             };
-            let Ok((vp_computed, vp_tf)) = viewport_query.single() else {
+            let Ok((vp_computed, vp_tf)) = vp.viewport.single() else {
                 return;
             };
             let scale = vp_computed.inverse_scale_factor();

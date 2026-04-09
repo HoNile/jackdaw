@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 
+use bevy::color::Color;
+
 use crate::text_edit::{TextEditPrefix, TextEditProps, text_edit};
-use crate::tokens::{TEXT_SIZE, TEXT_SIZE_SM};
+use crate::tokens::{self, TEXT_SIZE, TEXT_SIZE_SM};
 
 #[derive(Component)]
 pub struct EditorVectorEdit;
@@ -149,6 +151,7 @@ pub fn vector_edit(props: VectorEditProps) -> impl Bundle {
             .with_prefix(TextEditPrefix::Label {
                 label: suffixes.get(i).to_string(),
                 size: suffixes.text_size(),
+                color: axis_color(&suffixes, i),
             });
 
             if i == 0 {
@@ -187,4 +190,17 @@ pub fn vector_edit(props: VectorEditProps) -> impl Bundle {
         },
         Children::spawn(SpawnIter(children.into_iter())),
     )
+}
+
+/// Returns the accent color for a vector axis label (XYZ suffixes only).
+fn axis_color(suffixes: &VectorSuffixes, index: usize) -> Option<Color> {
+    match suffixes {
+        VectorSuffixes::XYZ | VectorSuffixes::XY => match index {
+            0 => Some(tokens::AXIS_X_COLOR),
+            1 => Some(tokens::AXIS_Y_COLOR),
+            2 => Some(tokens::AXIS_Z_COLOR),
+            _ => None,
+        },
+        _ => None,
+    }
 }

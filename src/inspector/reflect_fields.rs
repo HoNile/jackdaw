@@ -491,6 +491,42 @@ fn spawn_field_row(
         return;
     }
 
+    // Quat compact row (XYZW)
+    if let Some(quat) = value.try_downcast_ref::<Quat>() {
+        spawn_vec4_row(
+            commands,
+            parent,
+            name,
+            quat.x as f64,
+            quat.y as f64,
+            quat.z as f64,
+            quat.w as f64,
+            field_path,
+            source_entity,
+            type_path,
+            depth,
+        );
+        return;
+    }
+
+    // Vec4 compact row (XYZW)
+    if let Some(vec4) = value.try_downcast_ref::<Vec4>() {
+        spawn_vec4_row(
+            commands,
+            parent,
+            name,
+            vec4.x as f64,
+            vec4.y as f64,
+            vec4.z as f64,
+            vec4.w as f64,
+            field_path,
+            source_entity,
+            type_path,
+            depth,
+        );
+        return;
+    }
+
     // Color field with picker
     if let Some(color) = value.try_downcast_ref::<Color>() {
         spawn_color_field(
@@ -821,12 +857,12 @@ fn spawn_vec3_row(
     depth: usize,
 ) {
     let left_padding = depth as f32 * tokens::SPACING_MD;
-    let row = commands
+    // Column container: label above, axis inputs below
+    let col = commands
         .spawn((
             Node {
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(tokens::SPACING_XS),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(tokens::SPACING_XS),
                 padding: UiRect::left(px(left_padding)),
                 width: Val::Percent(100.0),
                 ..Default::default()
@@ -835,25 +871,33 @@ fn spawn_vec3_row(
         ))
         .id();
 
-    // Label
+    // Label row (small text above)
     commands.spawn((
-        Text::new(format!("{name}:")),
+        Text::new(name),
         TextFont {
             font_size: tokens::FONT_SM,
             ..Default::default()
         },
-        Node {
-            min_width: px(20.0),
-            flex_shrink: 0.0,
-            ..Default::default()
-        },
-        ThemedText,
-        ChildOf(row),
+        TextColor(tokens::TEXT_TERTIARY),
+        ChildOf(col),
     ));
+
+    // Axis inputs row (X Y Z side by side)
+    let axes_row = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: px(tokens::SPACING_MD),
+                width: Val::Percent(100.0),
+                ..Default::default()
+            },
+            ChildOf(col),
+        ))
+        .id();
 
     spawn_axis_input(
         commands,
-        row,
+        axes_row,
         "X",
         vec3.x as f64,
         colors::INSPECTOR_AXIS_X,
@@ -863,7 +907,7 @@ fn spawn_vec3_row(
     );
     spawn_axis_input(
         commands,
-        row,
+        axes_row,
         "Y",
         vec3.y as f64,
         colors::INSPECTOR_AXIS_Y,
@@ -873,7 +917,7 @@ fn spawn_vec3_row(
     );
     spawn_axis_input(
         commands,
-        row,
+        axes_row,
         "Z",
         vec3.z as f64,
         colors::INSPECTOR_AXIS_Z,
@@ -894,12 +938,11 @@ fn spawn_vec2_row(
     depth: usize,
 ) {
     let left_padding = depth as f32 * tokens::SPACING_MD;
-    let row = commands
+    let col = commands
         .spawn((
             Node {
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(tokens::SPACING_XS),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(tokens::SPACING_XS),
                 padding: UiRect::left(px(left_padding)),
                 width: Val::Percent(100.0),
                 ..Default::default()
@@ -908,24 +951,33 @@ fn spawn_vec2_row(
         ))
         .id();
 
+    // Label
     commands.spawn((
-        Text::new(format!("{name}:")),
+        Text::new(name),
         TextFont {
             font_size: tokens::FONT_SM,
             ..Default::default()
         },
-        Node {
-            min_width: px(20.0),
-            flex_shrink: 0.0,
-            ..Default::default()
-        },
-        ThemedText,
-        ChildOf(row),
+        TextColor(tokens::TEXT_TERTIARY),
+        ChildOf(col),
     ));
+
+    // Axis inputs row
+    let axes_row = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: px(tokens::SPACING_MD),
+                width: Val::Percent(100.0),
+                ..Default::default()
+            },
+            ChildOf(col),
+        ))
+        .id();
 
     spawn_axis_input(
         commands,
-        row,
+        axes_row,
         "X",
         vec2.x as f64,
         colors::INSPECTOR_AXIS_X,
@@ -935,11 +987,104 @@ fn spawn_vec2_row(
     );
     spawn_axis_input(
         commands,
-        row,
+        axes_row,
         "Y",
         vec2.y as f64,
         colors::INSPECTOR_AXIS_Y,
         format!("{field_path}.y"),
+        source_entity,
+        type_path,
+    );
+}
+
+fn spawn_vec4_row(
+    commands: &mut Commands,
+    parent: Entity,
+    name: &str,
+    x: f64,
+    y: f64,
+    z: f64,
+    w: f64,
+    field_path: String,
+    source_entity: Entity,
+    type_path: &str,
+    depth: usize,
+) {
+    let left_padding = depth as f32 * tokens::SPACING_MD;
+    let col = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: px(tokens::SPACING_XS),
+                padding: UiRect::left(px(left_padding)),
+                width: Val::Percent(100.0),
+                ..Default::default()
+            },
+            ChildOf(parent),
+        ))
+        .id();
+
+    // Label
+    commands.spawn((
+        Text::new(name),
+        TextFont {
+            font_size: tokens::FONT_SM,
+            ..Default::default()
+        },
+        TextColor(tokens::TEXT_TERTIARY),
+        ChildOf(col),
+    ));
+
+    // XYZW axis inputs row
+    let axes_row = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: px(tokens::SPACING_SM),
+                width: Val::Percent(100.0),
+                ..Default::default()
+            },
+            ChildOf(col),
+        ))
+        .id();
+
+    spawn_axis_input(
+        commands,
+        axes_row,
+        "X",
+        x,
+        colors::INSPECTOR_AXIS_X,
+        format!("{field_path}.x"),
+        source_entity,
+        type_path,
+    );
+    spawn_axis_input(
+        commands,
+        axes_row,
+        "Y",
+        y,
+        colors::INSPECTOR_AXIS_Y,
+        format!("{field_path}.y"),
+        source_entity,
+        type_path,
+    );
+    spawn_axis_input(
+        commands,
+        axes_row,
+        "Z",
+        z,
+        colors::INSPECTOR_AXIS_Z,
+        format!("{field_path}.z"),
+        source_entity,
+        type_path,
+    );
+    spawn_axis_input(
+        commands,
+        axes_row,
+        "W",
+        w,
+        tokens::AXIS_W_COLOR,
+        format!("{field_path}.w"),
         source_entity,
         type_path,
     );
@@ -955,28 +1100,17 @@ fn spawn_axis_input(
     source_entity: Entity,
     type_path: &str,
 ) {
-    // Axis label
-    commands.spawn((
-        Text::new(label),
-        TextFont {
-            font_size: tokens::FONT_SM,
-            ..Default::default()
-        },
-        TextColor(label_color),
-        Node {
-            flex_shrink: 0.0,
-            ..Default::default()
-        },
-        ChildOf(parent),
-    ));
-
-    // Numeric input
+    // Numeric input with colored axis prefix (X/Y/Z/W label inside the input)
     commands.spawn((
         text_edit::text_edit(
             TextEditProps::default()
                 .numeric_f32()
-                .grow()
-                .with_default_value(value.to_string()),
+                .with_default_value(value.to_string())
+                .with_prefix(text_edit::TextEditPrefix::Label {
+                    label: label.to_string(),
+                    size: tokens::TEXT_SIZE,
+                    color: Some(label_color),
+                }),
         ),
         FieldBinding {
             source_entity,
@@ -1000,12 +1134,13 @@ fn spawn_bool_toggle(
     icon_font: &Handle<Font>,
 ) {
     let left_padding = depth as f32 * tokens::SPACING_MD;
+    // Bool fields stay as a row (label + checkbox side by side)
     let row = commands
         .spawn((
             Node {
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
-                column_gap: px(tokens::SPACING_XS),
+                column_gap: px(tokens::SPACING_SM),
                 padding: UiRect::left(px(left_padding)),
                 ..Default::default()
             },
@@ -1018,11 +1153,6 @@ fn spawn_bool_toggle(
         TextFont {
             font: editor_font.clone(),
             font_size: tokens::FONT_SM,
-            ..Default::default()
-        },
-        Node {
-            min_width: px(20.0),
-            flex_shrink: 0.0,
             ..Default::default()
         },
         TextColor(tokens::TYPE_BOOL),
@@ -1055,32 +1185,28 @@ fn spawn_color_field(
     depth: usize,
 ) {
     let left_padding = depth as f32 * tokens::SPACING_MD;
-    let row = commands
+    let col = commands
         .spawn((
             Node {
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(tokens::SPACING_XS),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(tokens::SPACING_XS),
                 padding: UiRect::left(px(left_padding)),
+                width: Val::Percent(100.0),
                 ..Default::default()
             },
             ChildOf(parent),
         ))
         .id();
 
+    // Label above
     commands.spawn((
         Text::new(format!("{name}:")),
         TextFont {
             font_size: tokens::FONT_SM,
             ..Default::default()
         },
-        Node {
-            min_width: px(20.0),
-            flex_shrink: 0.0,
-            ..Default::default()
-        },
-        ThemedText,
-        ChildOf(row),
+        TextColor(tokens::TEXT_TERTIARY),
+        ChildOf(col),
     ));
 
     let srgba = color.to_srgba();
@@ -1096,7 +1222,7 @@ fn spawn_color_field(
                 type_path: type_path.to_string(),
                 field_path,
             },
-            ChildOf(row),
+            ChildOf(col),
         ))
         .observe(
             move |event: On<ColorPickerCommitEvent>, mut commands: Commands| {
@@ -1174,39 +1300,35 @@ fn spawn_numeric_field(
     depth: usize,
 ) {
     let left_padding = depth as f32 * tokens::SPACING_MD;
-    let row = commands
+    let col = commands
         .spawn((
             Node {
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(tokens::SPACING_XS),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(tokens::SPACING_XS),
                 padding: UiRect::left(px(left_padding)),
+                width: Val::Percent(100.0),
                 ..Default::default()
             },
             ChildOf(parent),
         ))
         .id();
 
+    // Label above
     commands.spawn((
-        Text::new(format!("{label}:")),
+        Text::new(label),
         TextFont {
             font_size: tokens::FONT_SM,
             ..Default::default()
         },
-        Node {
-            min_width: px(20.0),
-            flex_shrink: 0.0,
-            ..Default::default()
-        },
         TextColor(tokens::TYPE_NUMERIC),
-        ChildOf(row),
+        ChildOf(col),
     ));
 
+    // Input below
     commands.spawn((
         text_edit::text_edit(
             TextEditProps::default()
                 .numeric_f32()
-                .grow()
                 .with_default_value(value.to_string()),
         ),
         FieldBinding {
@@ -1214,7 +1336,7 @@ fn spawn_numeric_field(
             type_path: type_path.to_string(),
             field_path,
         },
-        ChildOf(row),
+        ChildOf(col),
     ));
 }
 
@@ -1230,38 +1352,34 @@ fn spawn_editable_field(
 ) {
     let left_padding = depth as f32 * tokens::SPACING_MD;
 
-    let row = commands
+    let col = commands
         .spawn((
             Node {
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(tokens::SPACING_XS),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(tokens::SPACING_XS),
                 padding: UiRect::left(px(left_padding)),
+                width: Val::Percent(100.0),
                 ..Default::default()
             },
             ChildOf(parent),
         ))
         .id();
 
+    // Label above
     commands.spawn((
-        Text::new(format!("{label}:")),
+        Text::new(label),
         TextFont {
             font_size: tokens::FONT_SM,
             ..Default::default()
         },
-        Node {
-            min_width: px(20.0),
-            flex_shrink: 0.0,
-            ..Default::default()
-        },
-        ThemedText,
-        ChildOf(row),
+        TextColor(tokens::TEXT_TERTIARY),
+        ChildOf(col),
     ));
 
+    // Input below
     commands.spawn((
         text_edit::text_edit(
             TextEditProps::default()
-                .grow()
                 .with_default_value(current_value)
                 .allow_empty(),
         ),
@@ -1270,7 +1388,7 @@ fn spawn_editable_field(
             type_path: type_path.to_string(),
             field_path,
         },
-        ChildOf(row),
+        ChildOf(col),
     ));
 }
 
@@ -1565,23 +1683,38 @@ pub(crate) fn on_text_edit_commit(
     mut commands: Commands,
     remote_proxies: Query<(), With<crate::remote::entity_browser::RemoteEntityProxy>>,
 ) {
-    // Walk up from the committed entity to find a FieldBinding
+    // Walk up from the committed entity to find a FieldBinding.
+    // Check the entity itself first, then walk up through parents.
     let mut current = event.entity;
     let mut found = None;
-    for _ in 0..4 {
-        let Ok(child_of) = child_of_query.get(current) else {
-            break;
-        };
-        if let Ok((binding, variant)) = bindings.get(child_of.parent()) {
-            found = Some((
-                binding.source_entity,
-                binding.type_path.clone(),
-                binding.field_path.clone(),
-                variant.copied(),
-            ));
-            break;
+
+    // Check the committed entity itself
+    if let Ok((binding, variant)) = bindings.get(current) {
+        found = Some((
+            binding.source_entity,
+            binding.type_path.clone(),
+            binding.field_path.clone(),
+            variant.copied(),
+        ));
+    }
+
+    // Walk up through parents (up to 6 levels for deeply nested UI)
+    if found.is_none() {
+        for _ in 0..6 {
+            let Ok(child_of) = child_of_query.get(current) else {
+                break;
+            };
+            if let Ok((binding, variant)) = bindings.get(child_of.parent()) {
+                found = Some((
+                    binding.source_entity,
+                    binding.type_path.clone(),
+                    binding.field_path.clone(),
+                    variant.copied(),
+                ));
+                break;
+            }
+            current = child_of.parent();
         }
-        current = child_of.parent();
     }
 
     let Some((source_entity, tp, path, variant)) = found else {

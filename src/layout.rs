@@ -1,12 +1,4 @@
-use bevy::{
-    feathers::{
-        theme::{ThemeBackgroundColor, ThemedText},
-        tokens as bevy_tokens,
-    },
-    picking::hover::Hovered,
-    prelude::*,
-    ui_widgets::observe,
-};
+use bevy::{feathers::theme::ThemedText, picking::hover::Hovered, prelude::*, ui_widgets::observe};
 use jackdaw_feathers::{
     icons::{Icon, IconFont},
     menu_bar, panel_header, popover, separator, split_panel, status_bar,
@@ -99,29 +91,48 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
     let font = icon_font.0.clone();
     (
         EditorEntity,
-        ThemeBackgroundColor(bevy_tokens::WINDOW_BG),
+        // Outer shell: dark background with padding (Figma: 10px padding, bg #171717)
+        BackgroundColor(tokens::WINDOW_BG),
         Node {
             width: percent(100),
             height: percent(100),
             flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            padding: UiRect::all(px(tokens::PANEL_GAP)),
             ..Default::default()
         },
-        children![
-            // Menu bar (fixed height, populated in spawn_layout)
-            menu_bar::menu_bar_shell(),
-            // Workspace tab bar
-            workspace_tab_bar(),
-            // Content container (flex grow) — holds both workspaces
-            (
-                EditorEntity,
-                Node {
-                    width: percent(100),
-                    flex_grow: 1.0,
-                    min_height: px(0.0),
-                    flex_direction: FlexDirection::Column,
-                    ..Default::default()
-                },
-                children![
+        children![(
+            // Inner container: the editor workspace with rounded corners and border.
+            EditorEntity,
+            Node {
+                width: percent(100),
+                flex_grow: 1.0,
+                min_height: px(0.0),
+                flex_direction: FlexDirection::Column,
+                border: UiRect::all(px(1.0)),
+                border_radius: BorderRadius::all(px(8.0)),
+                overflow: Overflow::clip(),
+                ..Default::default()
+            },
+            BackgroundColor(tokens::WINDOW_BG),
+            BorderColor::all(tokens::BORDER_SUBTLE),
+            children![
+                // Integrated window header: menu bar + scene tabs + controls
+                window_header(),
+                // Content container (flex grow). Holds both workspaces.
+                // Figma: Editor (Rows) has padding: 0px 4px
+                (
+                    EditorEntity,
+                    Node {
+                        width: percent(100),
+                        flex_grow: 1.0,
+                        min_height: px(0.0),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::horizontal(px(tokens::PANEL_GAP)),
+                        row_gap: px(tokens::PANEL_GAP),
+                        ..Default::default()
+                    },
+                    children![
                     // Scene Editor workspace (active by default)
                     (
                         SceneEditorWorkspace,
@@ -130,19 +141,35 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
                             width: percent(100),
                             flex_grow: 1.0,
                             min_height: px(0.0),
-                            flex_direction: FlexDirection::Column,
                             display: Display::Flex,
                             ..Default::default()
                         },
-                        // Vertical split: main area (top) + bottom panels (bottom)
-                        split_panel::panel_group(
-                            0.15,
-                            (
-                                Spawn((split_panel::panel(4), main_area(font.clone()))),
-                                Spawn(split_panel::panel_handle()),
-                                Spawn((split_panel::panel(1), bottom_panels(font))),
+                        children![(
+                            // Three-column layout: left (hierarchy) | center (viewport+bottom) | right (inspector)
+                            // Must have its own Node with Row direction for horizontal split
+                            Node {
+                                width: percent(100),
+                                height: percent(100),
+                                flex_direction: FlexDirection::Row,
+                                ..Default::default()
+                            },
+                            split_panel::panel_group(
+                                0.1,
+                                (
+                                    // Left column: hierarchy + project files (~266px default, ratio 1)
+                                    Spawn((split_panel::panel(1), left_column(font.clone()))),
+                                    Spawn(split_panel::panel_handle()),
+                                    // Center column: viewport + bottom panels (ratio 4)
+                                    Spawn((
+                                        split_panel::panel(4),
+                                        center_column(font.clone()),
+                                    )),
+                                    Spawn(split_panel::panel_handle()),
+                                    // Right column: inspector (~310px default, ratio 1)
+                                    Spawn((split_panel::panel(1), entity_inspector(font.clone()))),
+                                ),
                             ),
-                        ),
+                        )],
                     ),
                     // Remote Debug workspace (hidden by default)
                     (
@@ -172,68 +199,130 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
                         ),
                     )
                 ],
-            ),
-            // Status bar (fixed height) with connection indicator
-            editor_status_bar()
-        ],
+                ),
+                // Status bar (fixed height) with connection indicator
+                editor_status_bar()
+            ],
+        )],
     )
 }
 
-fn workspace_tab_bar() -> impl Bundle {
+/// Integrated window header: \[menu bar items\] \[scene tabs\] \[controls\]
+fn window_header() -> impl Bundle {
     (
-        WorkspaceTabBar,
         EditorEntity,
         Node {
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
             width: percent(100),
-            height: px(28.0),
+            height: px(34.0),
             flex_shrink: 0.0,
-            padding: UiRect::horizontal(px(tokens::SPACING_SM)),
-            column_gap: px(tokens::SPACING_XS),
+            border_radius: BorderRadius::top(Val::Px(7.0)),
             ..Default::default()
         },
-        BackgroundColor(tokens::TOOLBAR_BG),
+        BackgroundColor(tokens::WINDOW_BG),
         children![
-            workspace_tab("Scene", ActiveWorkspace::SceneEditor, true),
-            workspace_tab("Remote", ActiveWorkspace::RemoteDebug, false),
+            // Left: App name + menu bar
+            (
+                // This node hosts the MenuBar + MenuBarRoot so populate_menu_bar still works
+                menu_bar::menu_bar_shell(),
+            ),
+            // Center: workspace / scene tabs
+            (
+                WorkspaceTabBar,
+                EditorEntity,
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    flex_grow: 1.0,
+                    height: percent(100),
+                    column_gap: px(tokens::SPACING_SM),
+                    ..Default::default()
+                },
+                children![
+                    scene_tab("Main scene", ActiveWorkspace::SceneEditor, true),
+                    scene_tab("Remote", ActiveWorkspace::RemoteDebug, false),
+                ],
+            ),
+            // Right: placeholder for play/pause controls
+            (
+                EditorEntity,
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::horizontal(px(tokens::SPACING_MD)),
+                    column_gap: px(tokens::SPACING_SM),
+                    ..Default::default()
+                },
+            ),
         ],
     )
 }
 
-fn workspace_tab(label: &str, workspace: ActiveWorkspace, active: bool) -> impl Bundle {
-    let bg = if active {
-        tokens::SELECTED_BG
+/// A scene tab in the header with colored accent bar.
+fn scene_tab(label: &str, workspace: ActiveWorkspace, active: bool) -> impl Bundle {
+    let accent_color = if active {
+        tokens::ACCENT_BLUE
     } else {
-        tokens::TOOLBAR_BUTTON_BG
+        Color::NONE
+    };
+    let bg = if active {
+        Color::srgba(1.0, 1.0, 1.0, 0.08)
+    } else {
+        Color::NONE
+    };
+    let text_color = if active {
+        tokens::TEXT_PRIMARY
+    } else {
+        tokens::TEXT_SECONDARY
     };
     (
         WorkspaceTab(workspace),
         Interaction::default(),
         Node {
-            padding: UiRect::axes(px(tokens::SPACING_LG), px(tokens::SPACING_XS)),
-            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_SM)),
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            padding: UiRect::axes(px(7.0), px(4.0)),
+            column_gap: px(5.0),
+            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_MD)),
             ..Default::default()
         },
         BackgroundColor(bg),
-        children![(
-            Text::new(label.to_string()),
-            TextFont {
-                font_size: tokens::FONT_SM,
-                ..Default::default()
-            },
-            TextColor(if active {
-                tokens::TEXT_PRIMARY
-            } else {
-                tokens::TEXT_SECONDARY
-            }),
-        )],
+        children![
+            // Colored accent bar (2.5x12px)
+            (
+                Node {
+                    width: px(2.5),
+                    height: px(12.0),
+                    border_radius: BorderRadius::all(px(5.0)),
+                    ..Default::default()
+                },
+                BackgroundColor(accent_color),
+            ),
+            // Icon
+            (
+                Text::new(String::from(Icon::File.unicode())),
+                TextFont {
+                    font_size: 12.0,
+                    ..Default::default()
+                },
+                TextColor(text_color),
+            ),
+            // Label
+            (
+                Text::new(label.to_string()),
+                TextFont {
+                    font_size: tokens::TEXT_SIZE_LG,
+                    ..Default::default()
+                },
+                TextColor(text_color),
+            ),
+        ],
         observe(
             move |_: On<Pointer<Click>>,
                   mut workspace_res: ResMut<ActiveWorkspace>,
                   manager: Res<ConnectionManager>| {
-                // Only allow switching to Remote Debug when connected
                 if workspace == ActiveWorkspace::RemoteDebug && !manager.is_connected() {
                     return;
                 }
@@ -243,23 +332,95 @@ fn workspace_tab(label: &str, workspace: ActiveWorkspace, active: bool) -> impl 
     )
 }
 
-fn main_area(icon_font: Handle<Font>) -> impl Bundle {
+/// Left column: Scene Tree panel (top) + Project Files panel (bottom), resizable split
+fn left_column(icon_font: Handle<Font>) -> impl Bundle {
     (
         EditorEntity,
         Node {
             width: percent(100),
             height: percent(100),
+            flex_direction: FlexDirection::Column,
             ..Default::default()
         },
-        // Horizontal split: hierarchy | viewport | inspector
+        // Vertical split: hierarchy (top, ratio 3) | project files (bottom, ratio 1)
         split_panel::panel_group(
-            0.2,
+            0.15,
             (
-                Spawn((split_panel::panel(1), entity_heiarchy(icon_font.clone()))),
+                Spawn((split_panel::panel(3), entity_heiarchy(icon_font))),
                 Spawn(split_panel::panel_handle()),
-                Spawn((split_panel::panel(4), viewport_with_toolbar(icon_font))),
+                Spawn((split_panel::panel(1), project_files_panel())),
+            ),
+        ),
+    )
+}
+
+/// Project Files panel. File tree browser.
+fn project_files_panel() -> impl Bundle {
+    (
+        EditorEntity,
+        Node {
+            flex_direction: FlexDirection::Column,
+            width: percent(100),
+            height: percent(100),
+            overflow: Overflow::clip(),
+            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
+            ..Default::default()
+        },
+        BackgroundColor(tokens::PANEL_BG),
+        children![
+            panel_header::panel_tab_bar(&[panel_header::TabDef::new("Project Files", true)], true,),
+            // Search input
+            (
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    width: percent(100),
+                    padding: UiRect::all(px(tokens::SPACING_SM)),
+                    flex_shrink: 0.0,
+                    ..Default::default()
+                },
+                children![(text_edit::text_edit(
+                    TextEditProps::default()
+                        .with_placeholder("Search...")
+                        .allow_empty()
+                ),)],
+            ),
+            // File tree content, populated by ProjectFilesPlugin.
+            (
+                crate::project_files::ProjectFilesTree,
+                EditorEntity,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    width: percent(100),
+                    flex_grow: 1.0,
+                    min_height: px(0.0),
+                    overflow: Overflow::scroll_y(),
+                    padding: UiRect::all(px(tokens::SPACING_SM)),
+                    ..Default::default()
+                },
+            ),
+        ],
+    )
+}
+
+fn center_column(icon_font: Handle<Font>) -> impl Bundle {
+    (
+        EditorEntity,
+        Node {
+            width: percent(100),
+            height: percent(100),
+            flex_direction: FlexDirection::Column,
+            ..Default::default()
+        },
+        // Vertical split: viewport (top) | bottom panels (bottom)
+        split_panel::panel_group(
+            0.15,
+            (
+                Spawn((
+                    split_panel::panel(4),
+                    viewport_with_toolbar(icon_font.clone()),
+                )),
                 Spawn(split_panel::panel_handle()),
-                Spawn((split_panel::panel(1), entity_inspector())),
+                Spawn((split_panel::panel(1), bottom_panels(icon_font))),
             ),
         ),
     )
@@ -272,8 +433,10 @@ fn viewport_with_toolbar(icon_font: Handle<Font>) -> impl Bundle {
             height: percent(100),
             flex_direction: FlexDirection::Column,
             overflow: Overflow::clip(),
+            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
             ..Default::default()
         },
+        BackgroundColor(tokens::PANEL_BG),
         children![
             toolbar(icon_font),
             crate::navmesh::toolbar::navmesh_toolbar(),
@@ -298,25 +461,25 @@ fn toolbar(icon_font: Handle<Font>) -> impl Bundle {
             flex_shrink: 0.0,
             ..Default::default()
         },
-        BackgroundColor(tokens::TOOLBAR_BG),
+        BackgroundColor(tokens::PANEL_HEADER_BG),
         children![
             // Gizmo mode buttons
             toolbar_button(
-                Icon::Move,
+                Icon::Move3d,
                 "",
                 GizmoMode::Translate,
                 icon_font.clone(),
                 "Move (Esc)"
             ),
             toolbar_button(
-                Icon::RotateCw,
+                Icon::Rotate3d,
                 "R",
                 GizmoMode::Rotate,
                 icon_font.clone(),
                 "Rotate (R)"
             ),
             toolbar_button(
-                Icon::Scaling,
+                Icon::Scale3d,
                 "T",
                 GizmoMode::Scale,
                 icon_font.clone(),
@@ -330,7 +493,7 @@ fn toolbar(icon_font: Handle<Font>) -> impl Bundle {
             separator::separator(separator::SeparatorProps::vertical()),
             // Edit mode buttons
             toolbar_edit_button(
-                Icon::MousePointer,
+                Icon::MousePointer2,
                 EditToolButton::Object,
                 f.clone(),
                 "Object Mode"
@@ -405,7 +568,7 @@ fn toolbar_button(
                 Text::new(String::from(icon.unicode())),
                 TextFont {
                     font,
-                    font_size: tokens::FONT_MD,
+                    font_size: 15.0,
                     ..Default::default()
                 },
                 TextColor(tokens::TEXT_SECONDARY),
@@ -491,7 +654,7 @@ fn toolbar_edit_button(
             Text::new(String::from(icon.unicode())),
             TextFont {
                 font,
-                font_size: tokens::FONT_MD,
+                font_size: 15.0,
                 ..Default::default()
             },
             TextColor(tokens::TEXT_SECONDARY),
@@ -835,23 +998,34 @@ fn spawn_keybind_help_content(
 }
 
 fn entity_heiarchy(icon_font: Handle<Font>) -> impl Bundle {
+    let add_entity_icon_font = icon_font.clone();
     (
         HierarchyPanel,
         Node {
             height: percent(100),
             flex_direction: FlexDirection::Column,
             overflow: Overflow::clip(),
+            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
             ..Default::default()
         },
         BackgroundColor(tokens::PANEL_BG),
         children![
-            panel_header::panel_header("Hierarchy"),
+            panel_header::panel_tab_bar(
+                &[
+                    panel_header::TabDef::new("Scene Tree", true),
+                    panel_header::TabDef::new("Import", false),
+                ],
+                true,
+            ),
+            // Tab 0: Scene Tree content
             (
+                panel_header::PanelTabContent(0),
                 Node {
                     flex_direction: FlexDirection::Column,
                     flex_grow: 1.0,
                     min_height: px(0.0),
                     padding: UiRect::all(px(tokens::SPACING_SM)),
+                    display: Display::Flex,
                     ..Default::default()
                 },
                 children![
@@ -874,7 +1048,7 @@ fn entity_heiarchy(icon_font: Handle<Font>) -> impl Bundle {
                                     HierarchyFilter,
                                     text_edit::text_edit(
                                         TextEditProps::default()
-                                            .with_placeholder("Filter entities")
+                                            .with_placeholder("Filter...")
                                             .allow_empty()
                                     ),
                                 )],
@@ -903,6 +1077,58 @@ fn entity_heiarchy(icon_font: Handle<Font>) -> impl Bundle {
                             ),
                         ],
                     ),
+                    // Add Entity button (matching Figma reference)
+                    (
+                        Interaction::default(),
+                        Hovered::default(),
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            width: percent(100),
+                            height: px(tokens::ROW_HEIGHT),
+                            column_gap: px(tokens::SPACING_SM),
+                            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_MD)),
+                            margin: UiRect::vertical(px(tokens::SPACING_XS)),
+                            flex_shrink: 0.0,
+                            ..Default::default()
+                        },
+                        BackgroundColor(tokens::ELEVATED_BG),
+                        observe(
+                            |hover: On<Pointer<Over>>, mut bg: Query<&mut BackgroundColor>| {
+                                if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
+                                    bg.0 = tokens::TOOLBAR_ACTIVE_BG;
+                                }
+                            },
+                        ),
+                        observe(
+                            |out: On<Pointer<Out>>, mut bg: Query<&mut BackgroundColor>| {
+                                if let Ok(mut bg) = bg.get_mut(out.event_target()) {
+                                    bg.0 = tokens::ELEVATED_BG;
+                                }
+                            },
+                        ),
+                        children![
+                            (
+                                Text::new(String::from(Icon::PackagePlus.unicode())),
+                                TextFont {
+                                    font: add_entity_icon_font,
+                                    font_size: tokens::ICON_SM,
+                                    ..Default::default()
+                                },
+                                TextColor(tokens::TEXT_PRIMARY),
+                            ),
+                            (
+                                Text::new("Add Entity"),
+                                TextFont {
+                                    font_size: tokens::TEXT_SIZE,
+                                    weight: FontWeight::MEDIUM,
+                                    ..Default::default()
+                                },
+                                TextColor(tokens::TEXT_PRIMARY),
+                            ),
+                        ],
+                    ),
                     (
                         HierarchyTreeContainer,
                         Node {
@@ -916,8 +1142,47 @@ fn entity_heiarchy(icon_font: Handle<Font>) -> impl Bundle {
                         },
                         BackgroundColor(Color::NONE),
                         tree_container_drop_observers(),
+                    ),
+                    // Scene stats footer (center-justified)
+                    (
+                        crate::status_bar::SceneStatsText,
+                        Text::new(""),
+                        TextFont {
+                            font_size: tokens::FONT_SM,
+                            ..Default::default()
+                        },
+                        TextColor(tokens::TEXT_SECONDARY),
+                        TextLayout::new_with_justify(Justify::Center),
+                        Node {
+                            padding: UiRect::all(px(tokens::SPACING_XS)),
+                            flex_shrink: 0.0,
+                            width: percent(100),
+                            ..Default::default()
+                        },
                     )
                 ],
+            ),
+            // Tab 1: Import placeholder
+            (
+                panel_header::PanelTabContent(1),
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    flex_grow: 1.0,
+                    min_height: px(0.0),
+                    padding: UiRect::all(px(tokens::SPACING_MD)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    display: Display::None,
+                    ..Default::default()
+                },
+                children![(
+                    Text::new("Import"),
+                    TextFont {
+                        font_size: tokens::FONT_MD,
+                        ..Default::default()
+                    },
+                    TextColor(tokens::TEXT_SECONDARY),
+                )],
             )
         ],
     )
@@ -945,7 +1210,7 @@ pub fn update_toolbar_highlights(
     }
     for (button, mut bg) in &mut buttons {
         bg.0 = if button.0 == *mode {
-            tokens::SELECTED_BG
+            tokens::TOOLBAR_ACTIVE_BG
         } else {
             tokens::TOOLBAR_BUTTON_BG
         };
@@ -1011,7 +1276,7 @@ pub fn update_space_toggle_label(
 }
 
 /// Updates edit tool button backgrounds to highlight the active edit mode/draw state.
-pub fn update_edit_tool_highlights(
+pub(crate) fn update_edit_tool_highlights(
     edit_mode: Res<EditMode>,
     draw_state: Res<DrawBrushState>,
     mut buttons: Query<(&EditToolButton, &mut BackgroundColor)>,
@@ -1039,7 +1304,7 @@ pub fn update_edit_tool_highlights(
             EditToolButton::Physics => !draw_active && *edit_mode == EditMode::Physics,
         };
         bg.0 = if active {
-            tokens::SELECTED_BG
+            tokens::TOOLBAR_ACTIVE_BG
         } else {
             tokens::TOOLBAR_BUTTON_BG
         };
@@ -1077,25 +1342,27 @@ pub fn update_workspace_visibility(
     }
 }
 
-/// Update tab bg colors and dim remote tab when disconnected.
+/// Update scene tab styling and dim remote tab when disconnected.
 pub fn update_tab_highlights(
     workspace: Res<ActiveWorkspace>,
     manager: Res<ConnectionManager>,
     mut tabs: Query<(&WorkspaceTab, &mut BackgroundColor, &Children)>,
     mut texts: Query<&mut TextColor>,
+    mut bgs: Query<&mut BackgroundColor, Without<WorkspaceTab>>,
 ) {
     if !workspace.is_changed() && !manager.is_changed() {
         return;
     }
     let connected = manager.is_connected();
-    for (tab, mut bg, children) in &mut tabs {
+    for (tab, mut tab_bg, children) in &mut tabs {
         let is_active = tab.0 == *workspace;
         let is_disabled = tab.0 == ActiveWorkspace::RemoteDebug && !connected;
 
-        bg.0 = if is_active {
-            tokens::SELECTED_BG
+        // Tab background
+        tab_bg.0 = if is_active {
+            Color::srgba(1.0, 1.0, 1.0, 0.08)
         } else {
-            tokens::TOOLBAR_BUTTON_BG
+            Color::NONE
         };
 
         let text_color = if is_disabled {
@@ -1106,38 +1373,27 @@ pub fn update_tab_highlights(
             tokens::TEXT_SECONDARY
         };
 
+        // Update text + accent bar colors on children
+        let accent_color = if is_active {
+            tokens::ACCENT_BLUE
+        } else {
+            Color::NONE
+        };
+
         for child in children.iter() {
             if let Ok(mut tc) = texts.get_mut(child) {
                 tc.0 = text_color;
+            }
+            // Update accent bar bg (first child is the 2.5px bar)
+            if let Ok(mut child_bg) = bgs.get_mut(child) {
+                child_bg.0 = accent_color;
             }
         }
     }
 }
 
 fn bottom_panels(icon_font: Handle<Font>) -> impl Bundle {
-    (
-        EditorEntity,
-        Node {
-            width: percent(100),
-            height: percent(100),
-            ..Default::default()
-        },
-        // Horizontal split: asset browser | material browser
-        split_panel::panel_group(
-            0.15,
-            (
-                Spawn((
-                    split_panel::panel(2),
-                    asset_browser::asset_browser_panel(icon_font.clone()),
-                )),
-                Spawn(split_panel::panel_handle()),
-                Spawn((
-                    split_panel::panel(1),
-                    material_browser::material_browser_panel(icon_font),
-                )),
-            ),
-        ),
-    )
+    asset_browser::asset_browser_panel(icon_font)
 }
 
 /// Custom status bar that wraps the feathers status bar sections and adds
@@ -1155,7 +1411,7 @@ fn editor_status_bar() -> impl Bundle {
             flex_shrink: 0.0,
             ..Default::default()
         },
-        BackgroundColor(tokens::STATUS_BAR_BG),
+        BackgroundColor(tokens::WINDOW_BG),
         children![
             (
                 status_bar::StatusBarLeft,
@@ -1201,28 +1457,191 @@ fn editor_status_bar() -> impl Bundle {
     )
 }
 
-fn entity_inspector() -> impl Bundle {
+fn entity_inspector(icon_font: Handle<Font>) -> impl Bundle {
     (
         Node {
             height: percent(100),
             flex_direction: FlexDirection::Column,
             overflow: Overflow::clip(),
+            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
             ..Default::default()
         },
         BackgroundColor(tokens::PANEL_BG),
         children![
-            panel_header::panel_header("Inspector"),
+            panel_header::panel_tab_bar(
+                &[
+                    panel_header::TabDef::new("Components", true),
+                    panel_header::TabDef::new("Materials", false),
+                    panel_header::TabDef::new("Resources", false),
+                    panel_header::TabDef::new("Systems", false),
+                ],
+                true,
+            ),
+            // Tab 0: Components
             (
-                Inspector,
+                panel_header::PanelTabContent(0),
                 Node {
                     flex_direction: FlexDirection::Column,
-                    row_gap: px(tokens::SPACING_SM),
-                    overflow: Overflow::scroll_y(),
                     flex_grow: 1.0,
                     min_height: px(0.0),
-                    padding: UiRect::all(px(tokens::SPACING_SM)),
+                    display: Display::Flex,
                     ..Default::default()
-                }
+                },
+                children![
+                    // Filter + Add Component (non-scrolling header area)
+                    (
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            width: percent(100),
+                            padding: UiRect::all(px(tokens::SPACING_SM)),
+                            row_gap: px(tokens::SPACING_XS),
+                            flex_shrink: 0.0,
+                            ..Default::default()
+                        },
+                        children![
+                            // Filter input
+                            (
+                                crate::inspector::InspectorSearch,
+                                text_edit::text_edit(
+                                    TextEditProps::default()
+                                        .with_placeholder("Filter...")
+                                        .allow_empty()
+                                ),
+                            ),
+                            // Add Component button, wired to component_picker observer.
+                            (
+                                crate::inspector::AddComponentButton,
+                                Interaction::default(),
+                                Node {
+                                    flex_direction: FlexDirection::Row,
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    width: percent(100),
+                                    height: px(tokens::ROW_HEIGHT),
+                                    column_gap: px(tokens::SPACING_SM),
+                                    border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_MD)),
+                                    flex_shrink: 0.0,
+                                    ..Default::default()
+                                },
+                                BackgroundColor(tokens::ELEVATED_BG),
+                                observe(
+                                    |hover: On<Pointer<Over>>,
+                                     mut bg: Query<&mut BackgroundColor>| {
+                                        if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
+                                            bg.0 = tokens::TOOLBAR_ACTIVE_BG;
+                                        }
+                                    },
+                                ),
+                                observe(
+                                    |out: On<Pointer<Out>>,
+                                     mut bg: Query<&mut BackgroundColor>| {
+                                        if let Ok(mut bg) = bg.get_mut(out.event_target()) {
+                                            bg.0 = tokens::ELEVATED_BG;
+                                        }
+                                    },
+                                ),
+                                children![
+                                    (
+                                        Text::new(String::from(Icon::PackagePlus.unicode())),
+                                        TextFont {
+                                            font: icon_font.clone(),
+                                            font_size: tokens::ICON_SM,
+                                            ..Default::default()
+                                        },
+                                        TextColor(tokens::TEXT_PRIMARY),
+                                    ),
+                                    (
+                                        Text::new("Add Component"),
+                                        TextFont {
+                                            font_size: tokens::TEXT_SIZE,
+                                            weight: FontWeight::MEDIUM,
+                                            ..Default::default()
+                                        },
+                                        TextColor(tokens::TEXT_PRIMARY),
+                                    ),
+                                ],
+                                observe(
+                                    |click: On<Pointer<Click>>, mut commands: Commands| {
+                                        commands.trigger(
+                                            jackdaw_feathers::button::ButtonClickEvent {
+                                                entity: click.event_target(),
+                                            },
+                                        );
+                                    },
+                                ),
+                            ),
+                        ],
+                    ),
+                    // Scrollable component list
+                    (
+                        Inspector,
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(tokens::SPACING_SM),
+                            overflow: Overflow::scroll_y(),
+                            flex_grow: 1.0,
+                            min_height: px(0.0),
+                            padding: UiRect::all(px(tokens::SPACING_SM)),
+                            ..Default::default()
+                        }
+                    ),
+                ],
+            ),
+            // Tab 1: Materials browser (wrapped so PanelTabContent controls visibility)
+            (
+                panel_header::PanelTabContent(1),
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    flex_grow: 1.0,
+                    min_height: px(0.0),
+                    display: Display::None,
+                    ..Default::default()
+                },
+                children![material_browser::material_browser_panel(icon_font)],
+            ),
+            // Tab 2: Resources placeholder
+            (
+                panel_header::PanelTabContent(2),
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    flex_grow: 1.0,
+                    min_height: px(0.0),
+                    padding: UiRect::all(px(tokens::SPACING_MD)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    display: Display::None,
+                    ..Default::default()
+                },
+                children![(
+                    Text::new("Resources"),
+                    TextFont {
+                        font_size: tokens::FONT_MD,
+                        ..Default::default()
+                    },
+                    TextColor(tokens::TEXT_SECONDARY),
+                )],
+            ),
+            // Tab 3: Systems placeholder
+            (
+                panel_header::PanelTabContent(3),
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    flex_grow: 1.0,
+                    min_height: px(0.0),
+                    padding: UiRect::all(px(tokens::SPACING_MD)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    display: Display::None,
+                    ..Default::default()
+                },
+                children![(
+                    Text::new("Systems"),
+                    TextFont {
+                        font_size: tokens::FONT_MD,
+                        ..Default::default()
+                    },
+                    TextColor(tokens::TEXT_SECONDARY),
+                )],
             ),
         ],
     )

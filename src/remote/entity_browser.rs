@@ -39,26 +39,26 @@ pub struct RemoteEntityStatusText;
 
 /// Cached scene snapshot from the remote game.
 #[derive(Resource, Default)]
-pub struct RemoteSceneCache {
-    pub entities: Vec<RemoteEntity>,
+pub(crate) struct RemoteSceneCache {
+    pub(crate) entities: Vec<RemoteEntity>,
 }
 
 /// Maps remote entity bits → local proxy entity.
 #[derive(Resource, Default)]
-pub struct RemoteProxyIndex {
-    pub map: HashMap<u64, Entity>,
+pub(crate) struct RemoteProxyIndex {
+    pub(crate) map: HashMap<u64, Entity>,
 }
 
 /// Reverse lookup: proxy entity → tree row entity.
 #[derive(Resource, Default)]
-pub struct RemoteTreeRowIndex {
-    pub map: HashMap<Entity, Entity>,
+pub(crate) struct RemoteTreeRowIndex {
+    pub(crate) map: HashMap<Entity, Entity>,
 }
 
 /// Tracks the currently selected remote entity.
 #[derive(Resource, Default)]
-pub struct RemoteSelection {
-    pub selected: Option<u64>,
+pub(crate) struct RemoteSelection {
+    pub(crate) selected: Option<u64>,
 }
 
 /// In-flight snapshot request task.
@@ -298,7 +298,7 @@ fn apply_scene_snapshot(world: &mut World, entities: Vec<RemoteEntity>) {
         }
     }
 
-    // ── Existing: in both — update RemoteEntityName if changed ──
+    // Existing: in both, update RemoteEntityName if changed.
     let existing: Vec<u64> = current_bits.intersection(&new_bits).copied().collect();
     for bits in &existing {
         let Some(remote) = entity_map.get(bits) else {
@@ -407,7 +407,7 @@ fn apply_scene_snapshot(world: &mut World, entities: Vec<RemoteEntity>) {
         }
     }
 
-    // ── Added: in new but not in current — spawn proxy (tree row only if root & roots not just rebuilt) ──
+    // Added: in new but not in current. Spawn proxy (tree row only if root and roots not just rebuilt).
     let added: Vec<u64> = new_bits.difference(&current_bits).copied().collect();
     if !added.is_empty() {
         let icon_font = world
@@ -431,7 +431,7 @@ fn apply_scene_snapshot(world: &mut World, entities: Vec<RemoteEntity>) {
             };
 
             if is_root && !roots_changed {
-                // Root was added but we didn't rebuild roots above — spawn its tree row
+                // Root was added but we didn't rebuild roots above. Spawn its tree row.
                 if let (Some(container), Some(icon_font)) = (container, &icon_font) {
                     let has_children = children_of.contains(bits);
                     spawn_remote_tree_row(world, remote, has_children, container, icon_font);
@@ -514,7 +514,7 @@ fn update_expanded_children(world: &mut World, entities: &[RemoteEntity], new_bi
                 .unwrap_or_default();
 
             if existing_child_bits != new_child_bits {
-                // Children changed — despawn old child tree rows and reset
+                // Children changed, despawn old child tree rows and reset.
                 let old_children: Vec<Entity> = world
                     .get::<Children>(container)
                     .map(|c| c.iter().collect())
@@ -723,7 +723,7 @@ pub fn on_remote_tree_node_expanded(
 // ─────────────────────────── Remote Selection ───────────────────────────
 
 /// Handle tree row click for remote entity proxies.
-pub fn on_remote_tree_row_clicked(
+pub(crate) fn on_remote_tree_row_clicked(
     event: On<TreeRowClicked>,
     mut commands: Commands,
     proxies: Query<&RemoteEntityProxy>,
@@ -774,7 +774,7 @@ pub fn on_remote_tree_row_clicked(
 // ─────────────────────────── Cleanup ───────────────────────────
 
 /// When connection is lost, clean up all remote proxy state.
-pub fn cleanup_remote_proxies(
+pub(crate) fn cleanup_remote_proxies(
     mut commands: Commands,
     manager: Res<ConnectionManager>,
     mut workspace: ResMut<crate::layout::ActiveWorkspace>,

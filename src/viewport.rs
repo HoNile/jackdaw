@@ -8,6 +8,8 @@ use bevy::{
 use bevy_infinite_grid::{InfiniteGridBundle, InfiniteGridPlugin};
 use jackdaw_camera::{JackdawCameraPlugin, JackdawCameraSettings};
 
+use bevy::ecs::system::SystemParam;
+
 use crate::selection::{Selected, Selection};
 use jackdaw_widgets::file_browser::FileBrowserItem;
 
@@ -21,6 +23,30 @@ const DEFAULT_VIEWPORT_HEIGHT: u32 = 720;
 /// Marker on the center-panel UI node that hosts the 3D viewport.
 #[derive(Component)]
 pub struct SceneViewport;
+
+/// Bundled queries for converting screen position to a viewport ray.
+/// Used by selection, gizmos, modal transforms, and drawing systems.
+#[derive(SystemParam)]
+pub(crate) struct ViewportCursor<'w, 's> {
+    pub camera:
+        Query<'w, 's, (&'static Camera, &'static GlobalTransform), With<MainViewportCamera>>,
+    pub windows: Query<'w, 's, &'static Window>,
+    pub viewport:
+        Query<'w, 's, (&'static ComputedNode, &'static UiGlobalTransform), With<SceneViewport>>,
+}
+
+/// Read-only guard resources checked by many interaction systems before acting.
+/// If any guard is active, the system should bail early.
+#[derive(SystemParam)]
+pub(crate) struct InteractionGuards<'w> {
+    pub gizmo_drag: Res<'w, crate::gizmos::GizmoDragState>,
+    pub gizmo_hover: Res<'w, crate::gizmos::GizmoHoverState>,
+    pub modal: Res<'w, crate::modal_transform::ModalTransformState>,
+    pub viewport_drag: Res<'w, crate::modal_transform::ViewportDragState>,
+    pub draw_state: Res<'w, crate::draw_brush::DrawBrushState>,
+    pub edit_mode: Res<'w, crate::brush::EditMode>,
+    pub terrain_edit_mode: Res<'w, crate::terrain::TerrainEditMode>,
+}
 
 /// Tracks whether a right-click fly session started inside the viewport.
 /// While active, the camera keeps responding even when the cursor leaves the viewport.

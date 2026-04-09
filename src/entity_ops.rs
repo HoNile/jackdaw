@@ -169,7 +169,7 @@ fn apply_last_material(entity: Entity) -> impl FnOnce(&mut World) {
     }
 }
 
-/// World-access version of `create_entity` — used from menu actions and other deferred contexts.
+/// World-access version of `create_entity`. Used from menu actions and other deferred contexts.
 pub fn create_entity_in_world(world: &mut World, template: EntityTemplate) {
     let mut system_state: SystemState<(Commands, ResMut<Selection>)> = SystemState::new(world);
     let (mut commands, mut selection) = system_state.get_mut(world);
@@ -343,7 +343,7 @@ pub fn duplicate_selected(world: &mut World) {
         if let Some(parent) = parent {
             world.entity_mut(new_root).insert(ChildOf(parent));
         } else {
-            // Original was a root entity — remove any ChildOf the scene write may have added
+            // Original was a root entity, remove any ChildOf the scene write may have added.
             world.entity_mut(new_root).remove::<ChildOf>();
         }
 
@@ -376,7 +376,7 @@ fn snap_to_nearest_axis(v: Vec3) -> Vec3 {
 
 /// Derive TrenchBroom-style rotation axes from the camera transform.
 ///
-/// - **Yaw** (left/right arrows): always world Y — vertical rotation is always intuitive.
+/// - **Yaw** (left/right arrows): always world Y. Vertical rotation is always intuitive.
 /// - **Roll** (up/down arrows): camera forward projected to horizontal, snapped to nearest
 ///   world axis, then negated. This is the axis you're "looking along".
 /// - **Pitch** (PageUp/PageDown): camera right snapped to nearest world axis. If it
@@ -390,7 +390,7 @@ fn camera_snapped_rotation_axes(gt: &GlobalTransform) -> (Vec3, Vec3, Vec3) {
     let roll_axis = if fwd_horiz.length_squared() > 1e-6 {
         -snap_to_nearest_axis(fwd_horiz)
     } else {
-        // Looking straight down/up — use camera up projected horizontally instead
+        // Looking straight down/up, use camera up projected horizontally instead.
         let up = gt.up().as_vec3();
         let up_horiz = Vec3::new(up.x, 0.0, up.z);
         if up_horiz.length_squared() > 1e-6 {
@@ -404,7 +404,7 @@ fn camera_snapped_rotation_axes(gt: &GlobalTransform) -> (Vec3, Vec3, Vec3) {
     let right = gt.right().as_vec3();
     let mut pitch_axis = snap_to_nearest_axis(right);
     if pitch_axis.abs() == roll_axis.abs() {
-        // Collision — derive perpendicular horizontal axis
+        // Collision, derive perpendicular horizontal axis.
         pitch_axis = snap_to_nearest_axis(yaw_axis.cross(roll_axis));
     }
 
@@ -468,7 +468,7 @@ fn handle_entity_keys(world: &mut World) {
     let roll_right = keybinds.just_pressed(EditorAction::Roll90Right, keyboard);
     let any_rotation = rot_left || rot_right || rot_up || rot_down || roll_left || roll_right;
 
-    // Nudge — use key_just_pressed since Ctrl+arrow is also valid (duplicate+nudge)
+    // Nudge: use key_just_pressed since Ctrl+arrow is also valid (duplicate+nudge).
     let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let alt = keyboard.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
     let nudge_left = keybinds.key_just_pressed(EditorAction::NudgeLeft, keyboard) && !alt;

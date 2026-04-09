@@ -52,7 +52,7 @@ pub(crate) fn on_add_component_button_click(
     type_registry: Res<AppTypeRegistry>,
     components: &Components,
     entity_query: Query<&Archetype, (With<Selected>, Without<EditorEntity>)>,
-    inspector: Single<Entity, With<Inspector>>,
+    _inspector: Single<Entity, With<Inspector>>,
 ) {
     // Check if this click is on an AddComponentButton
     if add_buttons.get(event.entity).is_err() {
@@ -148,23 +148,84 @@ pub(crate) fn on_add_component_button_click(
         });
     }
 
-    // Spawn the picker panel
-    let picker = commands
+    // Spawn as a centered blocking dialog overlay
+    // Backdrop absorbs all pointer events and dims the background
+    let backdrop = commands
         .spawn((
             ComponentPicker,
+            crate::EditorEntity,
+            Interaction::default(),
+            bevy::ui::FocusPolicy::Block,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..Default::default()
+            },
+            BackgroundColor(tokens::DIALOG_BACKDROP),
+            GlobalZIndex(100),
+            crate::BlocksCameraInput,
+            // Click on backdrop to close
+            observe(
+                |_: On<Pointer<Click>>,
+                 mut commands: Commands,
+                 pickers: Query<Entity, With<ComponentPicker>>| {
+                    for picker in &pickers {
+                        commands.entity(picker).despawn();
+                    }
+                },
+            ),
+        ))
+        .id();
+
+    let picker = commands
+        .spawn((
             Node {
                 flex_direction: FlexDirection::Column,
-                width: Val::Percent(100.0),
-                max_height: Val::Px(300.0),
+                width: Val::Px(tokens::DIALOG_WIDTH),
+                max_height: Val::Px(tokens::DIALOG_MAX_HEIGHT),
                 border: UiRect::all(Val::Px(1.0)),
-                border_radius: BorderRadius::all(Val::Px(tokens::BORDER_RADIUS_MD)),
+                border_radius: BorderRadius::all(Val::Px(tokens::BORDER_RADIUS_LG)),
                 ..Default::default()
             },
             BackgroundColor(tokens::PANEL_BG),
-            BorderColor::all(tokens::BORDER_SUBTLE),
-            ChildOf(*inspector),
+            BorderColor::all(tokens::PANEL_BORDER),
+            BoxShadow(vec![ShadowStyle {
+                x_offset: Val::ZERO,
+                y_offset: Val::Px(4.0),
+                blur_radius: Val::Px(16.0),
+                spread_radius: Val::ZERO,
+                color: tokens::SHADOW_COLOR,
+            }]),
+            ChildOf(backdrop),
         ))
         .id();
+
+    // Dialog title bar
+    commands.spawn((
+        Node {
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            width: Val::Percent(100.0),
+            padding: UiRect::axes(Val::Px(tokens::SPACING_MD), Val::Px(tokens::SPACING_SM)),
+            border_radius: BorderRadius::top(Val::Px(tokens::BORDER_RADIUS_LG)),
+            ..Default::default()
+        },
+        BackgroundColor(tokens::COMPONENT_CARD_HEADER_BG),
+        ChildOf(picker),
+        children![(
+            Text::new("Add Component"),
+            TextFont {
+                font_size: tokens::FONT_MD,
+                weight: FontWeight::MEDIUM,
+                ..Default::default()
+            },
+            TextColor(tokens::TEXT_PRIMARY),
+        )],
+    ));
 
     // Search input
     commands.spawn((
@@ -272,7 +333,8 @@ pub(crate) fn on_add_component_button_click(
                     ChildOf(list),
                     observe({
                         let type_path_full = type_path_full.clone();
-                        move |_: On<Pointer<Click>>, mut commands: Commands| {
+                        move |mut click: On<Pointer<Click>>, mut commands: Commands| {
+                            click.propagate(false); // Don't let click through to backdrop
                             let tp = type_path_full.clone();
                             commands.queue(move |world: &mut World| {
                                 let cmd = crate::commands::AddComponent::new(
@@ -290,6 +352,17 @@ pub(crate) fn on_add_component_button_click(
 
                                 // Signal the inspector to rebuild
                                 world.entity_mut(source_entity).insert(InspectorDirty);
+
+                                // Close the picker dialog
+                                let pickers: Vec<Entity> = world
+                                    .query_filtered::<Entity, With<ComponentPicker>>()
+                                    .iter(world)
+                                    .collect();
+                                for picker in pickers {
+                                    if let Ok(ec) = world.get_entity_mut(picker) {
+                                        ec.despawn();
+                                    }
+                                }
                             });
                         }
                     }),
@@ -411,6 +484,19 @@ pub(crate) fn filter_component_picker(
             } else {
                 Display::None
             };
+        }
+    }
+}
+
+/// Close the component picker dialog when ESC is pressed.
+pub(crate) fn close_picker_on_escape(
+    keys: Res<ButtonInput<KeyCode>>,
+    pickers: Query<Entity, With<ComponentPicker>>,
+    mut commands: Commands,
+) {
+    if keys.just_pressed(KeyCode::Escape) && !pickers.is_empty() {
+        for picker in &pickers {
+            commands.entity(picker).despawn();
         }
     }
 }

@@ -142,6 +142,6 @@ fn chrono_now() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = dur.as_secs();
-    // Just store the unix timestamp — good enough for sorting
+    // Just store the unix timestamp, good enough for sorting.
     format!("{secs}")
 }

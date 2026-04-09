@@ -24,6 +24,7 @@ pub mod physics_brush_bridge;
 pub mod physics_tool;
 pub mod prefab_picker;
 pub mod project;
+pub mod project_files;
 pub mod project_select;
 pub mod remote;
 pub mod scene_io;
@@ -121,10 +122,13 @@ impl Plugin for EditorPlugin {
                 viewport_overlays::ViewportOverlaysPlugin,
                 view_modes::ViewModesPlugin,
                 status_bar::StatusBarPlugin,
+                project_files::ProjectFilesPlugin,
                 modal_transform::ModalTransformPlugin,
                 custom_properties::CustomPropertiesPlugin,
                 entity_templates::EntityTemplatesPlugin,
                 brush::BrushPlugin,
+            ))
+            .add_plugins((
                 material_browser::MaterialBrowserPlugin,
                 draw_brush::DrawBrushPlugin,
                 face_grid::FaceGridPlugin,
@@ -193,7 +197,7 @@ fn auto_hide_internal_entities(
 ) {
     for (entity, name, parent) in &new_entities {
         if name.is_none() && parent.is_some() {
-            // Skip GLTF descendants — they'll be shown in the hierarchy
+            // Skip GLTF descendants, they'll be shown in the hierarchy.
             let mut current = entity;
             let mut is_gltf_descendant = false;
             while let Ok(&ChildOf(p)) = parent_query.get(current) {

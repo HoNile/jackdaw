@@ -4,9 +4,7 @@ use bevy::{
 };
 use jackdaw_widgets::split_panel::{Panel, PanelGroup, PanelHandle};
 
-use crate::tokens;
-
-const HANDLE_SIZE: f32 = 4.0;
+const HANDLE_SIZE: f32 = 3.0;
 
 pub fn panel_group<C: SpawnableList<ChildOf> + Send + Sync + 'static>(
     min_ratio: f32,
@@ -29,7 +27,8 @@ pub fn panel_handle() -> impl Bundle {
             min_height: px(HANDLE_SIZE),
             ..default()
         },
-        BackgroundColor::from(tokens::BORDER_SUBTLE),
+        // Transparent so the dark window background shows through as the gap
+        BackgroundColor::from(Color::NONE),
     )
 }
 
@@ -38,10 +37,10 @@ pub struct SplitPanelPlugin;
 impl Plugin for SplitPanelPlugin {
     fn build(&self, app: &mut App) {
         app.add_observer(set_background_on_with::<Pointer<Over>, With<PanelHandle>>(
-            tokens::BORDER_STRONG,
+            crate::tokens::PANEL_BORDER,
         ))
         .add_observer(set_background_on_with::<Pointer<Out>, With<PanelHandle>>(
-            tokens::BORDER_SUBTLE,
+            Color::NONE,
         ))
         .add_observer(handle_panel_drag);
     }

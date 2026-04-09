@@ -10,7 +10,9 @@ use jackdaw_feathers::{
     icons::Icon,
     tokens,
 };
-use jackdaw_widgets::collapsible::{CollapsibleBody, CollapsibleHeader, CollapsibleSection};
+use jackdaw_widgets::collapsible::{
+    CollapsibleBody, CollapsibleHeader, CollapsibleSection, ToggleCollapsible,
+};
 
 use crate::commands::{AddComponent, CommandGroup, CommandHistory, EditorCommand};
 use crate::inspector::FieldBinding;
@@ -40,7 +42,7 @@ pub(super) fn spawn_physics_section(
     let has_collider = entity_ref.contains::<AvianCollider>();
     let is_enabled = has_rb || has_collider;
 
-    // Collapsible section
+    // Collapsible section (card styling)
     let section = commands
         .spawn((
             super::ComponentDisplay,
@@ -48,13 +50,24 @@ pub(super) fn spawn_physics_section(
             Node {
                 flex_direction: FlexDirection::Column,
                 width: Val::Percent(100.0),
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(tokens::COMPONENT_CARD_RADIUS)),
                 ..Default::default()
             },
+            BackgroundColor(tokens::COMPONENT_CARD_BG),
+            BorderColor::all(tokens::COMPONENT_CARD_BORDER),
+            BoxShadow(vec![ShadowStyle {
+                x_offset: Val::ZERO,
+                y_offset: Val::ZERO,
+                blur_radius: Val::Px(1.0),
+                spread_radius: Val::ZERO,
+                color: tokens::SHADOW_COLOR,
+            }]),
             ChildOf(inspector_entity),
         ))
         .id();
 
-    // Header
+    // Header (card header styling)
     let header = commands
         .spawn((
             CollapsibleHeader,
@@ -64,9 +77,10 @@ pub(super) fn spawn_physics_section(
                 column_gap: Val::Px(tokens::SPACING_SM),
                 padding: UiRect::axes(Val::Px(tokens::SPACING_MD), Val::Px(tokens::SPACING_SM)),
                 width: Val::Percent(100.0),
+                border_radius: BorderRadius::top(Val::Px(tokens::COMPONENT_CARD_RADIUS)),
                 ..Default::default()
             },
-            BackgroundColor(tokens::PANEL_BG),
+            BackgroundColor(tokens::COMPONENT_CARD_HEADER_BG),
             ChildOf(section),
         ))
         .id();
@@ -95,6 +109,16 @@ pub(super) fn spawn_physics_section(
         TextColor(tokens::TEXT_SECONDARY),
         ChildOf(header),
     ));
+
+    // Click to collapse/expand
+    let section_for_toggle = section;
+    commands
+        .entity(header)
+        .observe(move |_: On<Pointer<Click>>, mut commands: Commands| {
+            commands.trigger(ToggleCollapsible {
+                entity: section_for_toggle,
+            });
+        });
 
     // Body
     let body = commands
@@ -404,6 +428,16 @@ fn spawn_advanced_section(
         TextColor(tokens::TEXT_SECONDARY),
         ChildOf(header),
     ));
+
+    // Click to collapse/expand Advanced
+    let adv_section = section;
+    commands
+        .entity(header)
+        .observe(move |_: On<Pointer<Click>>, mut commands: Commands| {
+            commands.trigger(ToggleCollapsible {
+                entity: adv_section,
+            });
+        });
 
     let adv_body = commands
         .spawn((

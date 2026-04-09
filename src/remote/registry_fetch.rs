@@ -36,7 +36,7 @@ pub fn poll_registry_task(
                 _ => return,
             };
 
-            // Parse the schema types — registry.schema returns a map of type paths to type defs
+            // Parse the schema types. registry.schema returns a map of type paths to type defs.
             let types = match schema_value {
                 serde_json::Value::Object(map) => map.into_iter().collect(),
                 _ => std::collections::HashMap::new(),

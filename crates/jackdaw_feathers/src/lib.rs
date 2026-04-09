@@ -57,6 +57,7 @@ impl Plugin for EditorFeathersPlugin {
             color_picker::plugin,
             menu_bar::plugin,
             context_menu::plugin,
+            panel_header::plugin,
         ));
     }
 }

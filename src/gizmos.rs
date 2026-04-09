@@ -14,7 +14,7 @@ use crate::{
     viewport_util::{point_to_segment_dist, window_to_viewport_cursor},
 };
 
-/// Gizmo group for transform gizmos — rendered on top of all geometry.
+/// Gizmo group for transform gizmos, rendered on top of all geometry.
 #[derive(Default, Reflect, GizmoConfigGroup)]
 struct TransformGizmoGroup;
 
@@ -23,7 +23,7 @@ const AXIS_TIP_LENGTH: f32 = 0.25;
 const AXIS_START_OFFSET: f32 = 0.2;
 const ROTATE_RING_RADIUS: f32 = 1.0;
 const SCALE_CUBE_SIZE: f32 = 0.07;
-/// World units per unit of camera distance — controls the gizmo's constant screen-space size.
+/// World units per unit of camera distance. Controls the gizmo's constant screen-space size.
 const GIZMO_SCREEN_SCALE: f32 = 0.1;
 const INACTIVE_ALPHA: f32 = 0.15;
 const ROTATE_SENSITIVITY: f32 = 0.01;
@@ -189,7 +189,7 @@ pub(crate) fn handle_gizmo_hover(
     };
 
     let gizmo_pos = global_tf.translation();
-    // Scale is inherently local — force local orientation so handles match transform.scale axes
+    // Scale is inherently local, so force local orientation so handles match transform.scale axes
     let effective_space = if *mode == GizmoMode::Scale {
         &GizmoSpace::Local
     } else {
@@ -408,7 +408,7 @@ fn handle_gizmo_drag(
         return;
     }
 
-    // End drag — push undo command
+    // End drag: push undo command
     if drag_state.active && mouse.just_released(MouseButton::Left) {
         if let Some(entity) = drag_state.entity {
             if let Ok((_, transform)) = transforms.get(entity) {

@@ -32,7 +32,7 @@ pub fn status_bar() -> impl Bundle {
             flex_shrink: 0.0,
             ..Default::default()
         },
-        BackgroundColor(tokens::STATUS_BAR_BG),
+        BackgroundColor(tokens::WINDOW_BG),
         children![
             (
                 StatusBarLeft,

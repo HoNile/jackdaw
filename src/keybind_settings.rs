@@ -702,7 +702,7 @@ fn capture_keybind_recording(
         // If we're in conflict confirmation mode, check if user pressed the same key
         if let Some(ref conflict) = recording_state.conflict {
             if new_bind == conflict.new_bind {
-                // User confirmed — apply the rebind and clear the conflict
+                // User confirmed. Apply the rebind and clear the conflict.
                 let conflicting_action = conflict.conflicting_action;
                 if let Some(ref mut pending) = pending {
                     apply_rebind(
@@ -719,7 +719,7 @@ fn capture_keybind_recording(
                 registry.recording = false;
                 return;
             }
-            // Different key pressed — treat as a fresh recording (fall through below)
+            // Different key pressed, treat as a fresh recording (fall through below).
             recording_state.conflict = None;
         }
 
@@ -745,7 +745,7 @@ fn capture_keybind_recording(
                 return;
             }
 
-            // No conflict — apply directly
+            // No conflict, apply directly.
             apply_rebind(&mut pending.0, action, index, new_bind, None, &mut texts);
         }
 

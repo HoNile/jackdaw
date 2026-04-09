@@ -52,7 +52,7 @@ pub fn collapsible_section(
                 column_gap: Val::Px(tokens::SPACING_SM),
                 ..Default::default()
             },
-            BackgroundColor(tokens::PANEL_HEADER_BG),
+            BackgroundColor(tokens::COMPONENT_CARD_HEADER_BG),
             ChildOf(section),
         ))
         .id();
@@ -101,7 +101,7 @@ pub fn collapsible_section(
     commands.entity(header).observe(
         |out: On<Pointer<Out>>, mut bg: Query<&mut BackgroundColor, With<CollapsibleHeader>>| {
             if let Ok(mut bg) = bg.get_mut(out.event_target()) {
-                bg.0 = tokens::PANEL_HEADER_BG;
+                bg.0 = tokens::COMPONENT_CARD_HEADER_BG;
             }
         },
     );

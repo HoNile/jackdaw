@@ -238,7 +238,7 @@ fn scan_jsn_files(dir: &PathBuf, _assets_root: &PathBuf, results: &mut Vec<(Stri
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("jsn"))
         {
-            // Skip project.jsn files — they aren't scenes.
+            // Skip project.jsn files, they aren't scenes.
             if path
                 .file_name()
                 .is_some_and(|n| n.eq_ignore_ascii_case("project.jsn"))

@@ -27,7 +27,7 @@ fn on_dropdown_item_click(
     });
 }
 
-/// Handle click on a MenuBarItem — find the item by walking up from the event target.
+/// Handle click on a MenuBarItem: find the item by walking up from the event target.
 fn on_menu_bar_item_click(
     mut click: On<Pointer<Click>>,
     mut commands: Commands,
@@ -118,7 +118,7 @@ fn find_ancestor(
 #[derive(Component)]
 pub struct MenuBarRoot;
 
-/// Build the styled menu bar shell — items are spawned by `populate_menu_bar` system.
+/// Build the styled menu bar shell. Items are spawned by `populate_menu_bar` system.
 pub fn menu_bar_shell() -> impl Bundle {
     (
         MenuBarRoot,
@@ -132,7 +132,7 @@ pub fn menu_bar_shell() -> impl Bundle {
             padding: UiRect::horizontal(Val::Px(tokens::SPACING_SM)),
             ..Default::default()
         },
-        BackgroundColor(tokens::TOOLBAR_BG),
+        BackgroundColor(tokens::WINDOW_BG),
     )
 }
 

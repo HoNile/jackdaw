@@ -349,7 +349,7 @@ fn detect_and_create_materials(
                     );
                 }
                 "displacement" | "displace" | "disp" | "dsp" | "height" | "heightmap" => {
-                    // Skip 16-bit integer PNGs — Bevy decodes them as R16Uint which
+                    // Skip 16-bit integer PNGs. Bevy decodes them as R16Uint which
                     // is incompatible with StandardMaterial's float-filterable depth_map slot.
                     if !is_16bit_png(Path::new(asset_path)) {
                         depth_map = Some(
@@ -417,7 +417,7 @@ fn scan_dir_recursive(
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
 
-            // Skip non-2D KTX2 files (cubemaps, texture arrays) — they can't
+            // Skip non-2D KTX2 files (cubemaps, texture arrays). They can't
             // be used as regular 2D textures in StandardMaterial.
             if path
                 .extension()
@@ -733,7 +733,7 @@ fn update_preview_area(
         return;
     };
 
-    // Don't rebuild while a slider drag is in progress — the drag system
+    // Don't rebuild while a slider drag is in progress. The drag system
     // has in-flight commands targeting child entities.
     if let Some(children) = children {
         for child in children.iter() {
@@ -1472,6 +1472,8 @@ pub fn material_browser_panel(icon_font: Handle<Font>) -> impl Bundle {
             width: Val::Percent(100.0),
             height: Val::Percent(100.0),
             flex_direction: FlexDirection::Column,
+            border_radius: BorderRadius::all(Val::Px(tokens::BORDER_RADIUS_LG)),
+            overflow: Overflow::clip(),
             ..Default::default()
         },
         BackgroundColor(tokens::PANEL_BG),

@@ -56,7 +56,7 @@ jobs:
         run: cargo binstall cargo-nextest --locked --force
 
       - name: Run tests
-        run: cargo nextest run --locked --workspace --all-targets --no-fail-fast --no-tests warn
+        run: cargo nextest run --locked --workspace --lib --bins --tests --no-fail-fast --no-tests warn
 
       - name: Run doctests
         run: cargo test --locked --workspace --doc

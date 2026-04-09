@@ -288,7 +288,7 @@ fn on_name_changed(
             }
         }
     } else {
-        // Entity has no tree row — create one if it's a visible root
+        // Entity has no tree row. Create one if it's a visible root
         let Some(container) = container else {
             return;
         };
@@ -390,7 +390,7 @@ fn on_entity_reparented(
         if let Some(container) = parent_container {
             commands.entity(tree_entity).insert(ChildOf(container));
         } else {
-            // Parent has no tree row yet — remove this incorrectly-rooted tree row.
+            // Parent has no tree row yet. Remove this incorrectly-rooted tree row.
             // Lazy loading will re-create it when the parent is expanded.
             let source = entity;
             commands.queue(move |world: &mut World| {
@@ -403,7 +403,7 @@ fn on_entity_reparented(
         return;
     }
 
-    // No tree row exists — only spawn if the parent's children are already populated
+    // No tree row exists. Only spawn if the parent's children are already populated
     let Some(parent_container) = parent_container else {
         return;
     };
@@ -484,7 +484,7 @@ fn on_tree_node_expanded(
 
     let source = tree_node.0;
 
-    // Skip remote entity proxies — handled by entity_browser observer
+    // Skip remote entity proxies, handled by entity_browser observer
     if remote_check.contains(source) {
         return;
     }
@@ -559,7 +559,7 @@ fn on_tree_row_clicked(
     tree_nodes: Query<Entity, With<TreeNode>>,
     remote_check: Query<(), With<crate::remote::entity_browser::RemoteEntityProxy>>,
 ) {
-    // Skip remote entity proxies — handled by entity_browser observer
+    // Skip remote entity proxies, handled by entity_browser observer
     if remote_check.contains(event.source_entity) {
         return;
     }

@@ -42,7 +42,7 @@ const SKIP_PREFIXES: &[&str] = &[
 pub fn generate_component_definitions(type_registry: Res<AppTypeRegistry>) {
     let registry = type_registry.read();
 
-    // Determine output directory — use current working directory
+    // Determine output directory. Use current working directory.
     let jsn_dir = Path::new(".jsn");
     if std::fs::create_dir_all(jsn_dir).is_err() {
         warn!("JackdawRemote: Could not create .jsn directory");

@@ -60,9 +60,9 @@ pub struct TerrainChunk {
 
 /// Tracks which chunks need mesh rebuilds.
 #[derive(Component, Default)]
-pub struct TerrainDirtyChunks {
-    pub dirty: HashSet<(u32, u32)>,
-    pub rebuild_all: bool,
+pub(crate) struct TerrainDirtyChunks {
+    pub(crate) dirty: HashSet<(u32, u32)>,
+    pub(crate) rebuild_all: bool,
 }
 
 // --- Resources ---
@@ -96,7 +96,7 @@ impl Default for TerrainBrushSettings {
 
 /// State for an active sculpt stroke.
 #[derive(Resource, Default)]
-pub struct TerrainSculptState {
+pub(crate) struct TerrainSculptState {
     /// The terrain entity being sculpted.
     pub target: Option<Entity>,
     /// Whether a stroke is currently active (LMB held).

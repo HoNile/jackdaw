@@ -16,9 +16,7 @@ pub use self::csg::{
 pub use self::geometry::{compute_brush_geometry, compute_face_tangent_axes};
 pub use self::hull::HullFace;
 pub(crate) use self::hull::merge_hull_triangles;
-pub(crate) use self::interaction::{
-    BrushDragState, ClipState, EdgeDragState, VertexDragConstraint, VertexDragState,
-};
+pub(crate) use self::interaction::{BrushDragState, ClipState, EdgeDragState, VertexDragState};
 pub use jackdaw_jsn::{Brush, BrushFaceData, BrushPlane};
 
 /// Cached computed geometry (NOT serialized, rebuilt from Brush).

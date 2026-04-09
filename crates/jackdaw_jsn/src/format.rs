@@ -10,7 +10,7 @@ pub struct JsnScene {
     pub jsn: JsnHeader,
     /// Scene metadata (name, author, timestamps).
     pub metadata: JsnMetadata,
-    /// Asset manifest — lists referenced asset paths.
+    /// Asset manifest, lists referenced asset paths.
     pub assets: JsnAssets,
     /// Reserved for future editor state (camera bookmarks, snap settings, etc.).
     pub editor: Option<JsnEditorState>,
@@ -80,7 +80,7 @@ impl From<JsnVisibility> for Visibility {
     }
 }
 
-/// JSN v3 entity — all data is in components (Name, Transform, Visibility included).
+/// JSN v3 entity. All data is in components (Name, Transform, Visibility included).
 /// Only `parent` remains structural (serialization ordering).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct JsnEntity {
@@ -90,7 +90,7 @@ pub struct JsnEntity {
     pub components: HashMap<String, serde_json::Value>,
 }
 
-/// Legacy v2 entity format — only used for migration.
+/// Legacy v2 entity format, only used for migration.
 #[derive(Deserialize, Clone, Debug)]
 pub struct JsnEntityV2 {
     pub name: Option<String>,
@@ -102,7 +102,7 @@ pub struct JsnEntityV2 {
     pub components: HashMap<String, serde_json::Value>,
 }
 
-/// Legacy v2 scene format — only used for migration.
+/// Legacy v2 scene format, only used for migration.
 #[derive(Deserialize, Clone, Debug)]
 pub struct JsnSceneV2 {
     pub jsn: JsnHeader,
@@ -205,7 +205,7 @@ pub struct JsnMetadata {
     pub modified: String,
 }
 
-/// Generic asset table — keyed by type path, then by asset name.
+/// Generic asset table, keyed by type path, then by asset name.
 ///
 /// JSON example:
 /// ```json

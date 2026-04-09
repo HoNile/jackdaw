@@ -90,7 +90,7 @@ fn build_dynamic_scene(
     for (i, jsn) in entities.iter().enumerate() {
         for (type_path, value) in &jsn.components {
             let Some(registration) = registry.get_with_type_path(type_path) else {
-                warn!("Unknown type '{type_path}' — skipping");
+                warn!("Unknown type '{type_path}', skipping");
                 continue;
             };
             let Some(reflect_component) = registration.data::<ReflectComponent>() else {
@@ -98,7 +98,7 @@ fn build_dynamic_scene(
             };
             let deserializer = TypedReflectDeserializer::new(registration, &registry);
             let Ok(reflected) = deserializer.deserialize(value) else {
-                warn!("Failed to deserialize '{type_path}' — skipping");
+                warn!("Failed to deserialize '{type_path}', skipping");
                 continue;
             };
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -109,7 +109,7 @@ fn build_dynamic_scene(
                 );
             }));
             if result.is_err() {
-                warn!("Panic while inserting component '{type_path}' — skipping");
+                warn!("Panic while inserting component '{type_path}', skipping");
             }
         }
     }

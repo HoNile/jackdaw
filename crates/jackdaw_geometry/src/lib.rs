@@ -154,7 +154,7 @@ pub fn triangulate_face(indices: &[usize]) -> Vec<[u32; 3]> {
 pub fn compute_face_tangent_axes(normal: Vec3) -> (Vec3, Vec3) {
     let abs_n = normal.abs();
     let up = if abs_n.y >= abs_n.x && abs_n.y >= abs_n.z {
-        // Normal is mostly Y — use Z as reference
+        // Normal is mostly Y, use Z as reference
         Vec3::Z
     } else {
         Vec3::Y
@@ -227,7 +227,7 @@ pub fn brush_planes_to_world(
 /// Uses separating-axis test on face normals: if every vertex of B is
 /// outside some face of A (or vice-versa), the volumes are separated.
 /// For convex polyhedra this can produce false positives (edge-edge
-/// cases) but never false negatives, which is the safe direction —
+/// cases) but never false negatives, which is the safe direction:
 /// we'd rather attempt an unnecessary subtract than miss a real cut.
 /// This avoids the numerical issues of the previous approach which
 /// computed geometry of the combined face set and broke for thin volumes.

@@ -3,272 +3,90 @@ use jackdaw_feathers::status_bar::{StatusBarCenter, StatusBarLeft, StatusBarRigh
 
 use crate::{
     EditorEntity,
-    brush::{BrushEditMode, ClipState, EditMode, VertexDragConstraint, VertexDragState},
-    draw_brush::{DrawBrushState, DrawMode, DrawPhase},
+    brush::{BrushEditMode, EditMode},
+    draw_brush::DrawBrushState,
     gizmos::{GizmoMode, GizmoSpace},
-    modal_transform::{ModalConstraint, ModalOp, ModalTransformState},
+    modal_transform::{ModalOp, ModalTransformState},
     scene_io::{SceneDirtyState, SceneFilePath},
-    selection::{Selected, Selection},
-    snapping::SnapSettings,
 };
+
+/// Git branch + short commit hash, read once at startup.
+#[derive(Resource, Default)]
+pub struct GitInfo {
+    pub display: String,
+}
 
 pub struct StatusBarPlugin;
 
 impl Plugin for StatusBarPlugin {
     fn build(&self, app: &mut App) {
+        // Read git info once at startup
+        let git_display = read_git_info();
+        app.insert_resource(GitInfo {
+            display: git_display,
+        });
         app.add_systems(
             Update,
             (
                 update_status_left,
                 update_status_center,
                 update_status_right,
+                update_scene_stats,
             )
                 .run_if(in_state(crate::AppState::Editor)),
         );
     }
 }
 
+fn read_git_info() -> String {
+    let branch = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let hash = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if branch.is_empty() {
+        String::new()
+    } else {
+        format!("{branch} ({hash})")
+    }
+}
+
 fn update_status_left(
-    selection: Res<Selection>,
-    selected: Query<Option<&Name>, With<Selected>>,
-    transforms: Query<&Transform>,
+    git_info: Res<GitInfo>,
     mut text_query: Query<&mut Text, With<StatusBarLeft>>,
 ) {
+    // Git info is static, only set once
     let Ok(mut text) = text_query.single_mut() else {
         return;
     };
-
-    let count = selection.entities.len();
-    if count == 0 {
-        if selection.is_changed() {
-            text.0 = "No selection".to_string();
-        }
-    } else if count == 1 {
-        if let Some(primary) = selection.primary() {
-            let name = selected
-                .get(primary)
-                .ok()
-                .flatten()
-                .map(|n| n.as_str().to_string())
-                .unwrap_or_else(|| format!("{primary}"));
-            let pos_str = transforms
-                .get(primary)
-                .map(|t| {
-                    let p = t.translation;
-                    format!("  Pos: ({:.2}, {:.2}, {:.2})", p.x, p.y, p.z)
-                })
-                .unwrap_or_default();
-            let new_text = format!("{name}{pos_str}");
-            if text.0 != new_text {
-                text.0 = new_text;
-            }
-        }
-    } else if selection.is_changed() {
-        text.0 = format!("{count} entities selected");
+    if text.0.is_empty() && !git_info.display.is_empty() {
+        text.0 = git_info.display.clone();
     }
 }
 
 fn update_status_center(
-    scene_entities: Query<Entity, (With<Transform>, Without<EditorEntity>)>,
-    meshes: Query<(), (With<Mesh3d>, Without<EditorEntity>)>,
-    point_lights: Query<(), (With<PointLight>, Without<EditorEntity>)>,
-    dir_lights: Query<(), (With<DirectionalLight>, Without<EditorEntity>)>,
-    spot_lights: Query<(), (With<SpotLight>, Without<EditorEntity>)>,
-    cameras: Query<(), (With<Camera3d>, Without<EditorEntity>)>,
-    navmesh_state: Res<crate::navmesh::NavmeshState>,
-    mut text_query: Query<&mut Text, With<StatusBarCenter>>,
-) {
-    let Ok(mut text) = text_query.single_mut() else {
-        return;
-    };
-
-    if !matches!(navmesh_state.status, crate::navmesh::NavmeshStatus::Idle) {
-        let status_str = format!("{}", navmesh_state.status);
-        if text.0 != status_str {
-            text.0 = status_str;
-        }
-        return;
-    }
-
-    let total = scene_entities.iter().count();
-    let mesh_count = meshes.iter().count();
-    let light_count =
-        point_lights.iter().count() + dir_lights.iter().count() + spot_lights.iter().count();
-    let camera_count = cameras.iter().count();
-
-    let new_text = format!(
-        "Entities: {total}  |  Meshes: {mesh_count}  |  Lights: {light_count}  |  Cameras: {camera_count}"
-    );
-    if text.0 != new_text {
-        text.0 = new_text;
-    }
-}
-
-fn update_status_right(
-    mode: Res<GizmoMode>,
-    space: Res<GizmoSpace>,
     scene_path: Res<SceneFilePath>,
-    snap_settings: Res<SnapSettings>,
-    modal: Res<ModalTransformState>,
-    edit_mode: Res<EditMode>,
-    vertex_drag: Res<VertexDragState>,
-    clip_state: Res<ClipState>,
-    draw_state: Res<DrawBrushState>,
     scene_dirty: Res<SceneDirtyState>,
     history: Res<jackdaw_commands::CommandHistory>,
-    mut text_query: Query<&mut Text, With<StatusBarRight>>,
+    mut text_query: Query<&mut Text, With<StatusBarCenter>>,
 ) {
-    if !mode.is_changed()
-        && !space.is_changed()
-        && !snap_settings.is_changed()
-        && !modal.is_changed()
-        && !edit_mode.is_changed()
-        && !vertex_drag.is_changed()
-        && !clip_state.is_changed()
-        && !draw_state.is_changed()
-        && !scene_dirty.is_changed()
-        && !history.is_changed()
-    {
+    if !scene_path.is_changed() && !scene_dirty.is_changed() && !history.is_changed() {
         return;
     }
     let Ok(mut text) = text_query.single_mut() else {
         return;
     };
 
-    // Show draw brush mode status
-    if let Some(ref active) = draw_state.active {
-        let mode_label = match (active.mode, active.append_target.is_some()) {
-            (DrawMode::Add, true) => "APPEND",
-            (DrawMode::Add, false) => "ADD",
-            (DrawMode::Cut, _) => "CUT",
-        };
-        text.0 = match active.phase {
-            DrawPhase::PlacingFirstCorner => {
-                format!(
-                    "DRAW BRUSH ({mode_label}): Click to place first corner (Ctrl lock plane, Tab toggle mode) | Esc cancel"
-                )
-            }
-            DrawPhase::DrawingFootprint => {
-                format!(
-                    "DRAW BRUSH ({mode_label}): Drag to size rectangle, or release to place polygon vertices | Esc cancel"
-                )
-            }
-            DrawPhase::DrawingRotatedWidth => {
-                format!(
-                    "DRAW BRUSH ({mode_label}): Move to set width, click to confirm | Esc cancel"
-                )
-            }
-            DrawPhase::DrawingPolygon => {
-                let n = active.polygon_vertices.len();
-                if n >= 3 {
-                    format!(
-                        "DRAW BRUSH ({mode_label}): Click to add vertex ({n} placed), click near first to close, Enter close | Backspace undo, Esc cancel"
-                    )
-                } else {
-                    format!(
-                        "DRAW BRUSH ({mode_label}): Click to add vertex ({n} placed, need 3+) | Backspace undo, Esc cancel"
-                    )
-                }
-            }
-            DrawPhase::ExtrudingDepth => {
-                format!(
-                    "DRAW BRUSH ({mode_label}): Move for depth ({:.2}), click to create | Esc cancel",
-                    active.depth
-                )
-            }
-        };
-        return;
-    }
-
-    // Show brush edit mode info
-    if let EditMode::BrushEdit(sub_mode) = *edit_mode {
-        let sub_str = match sub_mode {
-            BrushEditMode::Face => "Face",
-            BrushEditMode::Vertex => "Vertex",
-            BrushEditMode::Edge => "Edge",
-            BrushEditMode::Clip => "Clip",
-        };
-        let extra = if vertex_drag.active {
-            let c = match vertex_drag.constraint {
-                VertexDragConstraint::Free => "Free",
-                VertexDragConstraint::AxisX => "X",
-                VertexDragConstraint::AxisY => "Y",
-                VertexDragConstraint::AxisZ => "Z",
-            };
-            format!(" | Dragging ({c}) X/Y/Z constrain")
-        } else if sub_mode == BrushEditMode::Clip {
-            let n = clip_state.points.len();
-            if n < 2 {
-                format!(" | Click {}-3 points, Enter apply, Esc cancel", n + 1)
-            } else {
-                " | Enter apply, Esc cancel".to_string()
-            }
-        } else {
-            String::new()
-        };
-        let base_hint = if sub_mode == BrushEditMode::Vertex {
-            "Drag move  Shift+Drag split edge  Del remove"
-        } else {
-            "Drag to move  Del remove"
-        };
-        text.0 =
-            format!("EDIT MODE: {sub_str} | 1 Vert  2 Edge  3 Face  4 Clip | {base_hint}{extra}");
-        return;
-    }
-
-    // Show modal operation info when active
-    if let Some(ref active) = modal.active {
-        let op_str = match active.op {
-            ModalOp::Grab => "Grab",
-            ModalOp::Rotate => "Rotate",
-            ModalOp::Scale => "Scale",
-        };
-        let constraint_str = match active.constraint {
-            ModalConstraint::Free => "Free".to_string(),
-            ModalConstraint::Axis(axis) => format!("{axis:?} axis"),
-            ModalConstraint::Plane(excluded) => format!("{excluded:?} plane"),
-        };
-        text.0 = format!("{op_str}: {constraint_str} | LMB confirm, RMB/Esc cancel");
-        return;
-    }
-
-    let mode_str = match *mode {
-        GizmoMode::Translate => "Translate",
-        GizmoMode::Rotate => "Rotate",
-        GizmoMode::Scale => "Scale",
-    };
-    let space_str = match *space {
-        GizmoSpace::World => "World",
-        GizmoSpace::Local => "Local",
-    };
-
-    let snap_str = match *mode {
-        GizmoMode::Translate => {
-            if snap_settings.translate_snap {
-                format!("Snap: {:.2}", snap_settings.translate_increment)
-            } else {
-                "Snap: Off".to_string()
-            }
-        }
-        GizmoMode::Rotate => {
-            if snap_settings.rotate_snap {
-                format!(
-                    "Snap: {:.0}\u{00b0}",
-                    snap_settings.rotate_increment.to_degrees()
-                )
-            } else {
-                "Snap: Off".to_string()
-            }
-        }
-        GizmoMode::Scale => {
-            if snap_settings.scale_snap {
-                format!("Snap: {:.2}", snap_settings.scale_increment)
-            } else {
-                "Snap: Off".to_string()
-            }
-        }
-    };
-
+    let version = env!("CARGO_PKG_VERSION");
     let dirty = history.undo_stack.len() != scene_dirty.undo_len_at_save;
     let dirty_marker = if dirty { "*" } else { "" };
     let path_str = scene_path
@@ -283,5 +101,99 @@ fn update_status_right(
             }
         });
 
-    text.0 = format!("{mode_str} ({space_str}) | {snap_str}{path_str}");
+    text.0 = format!("Jackdaw v{version}{path_str}");
+}
+
+/// Marker for the scene stats text in the hierarchy panel footer.
+#[derive(Component)]
+pub struct SceneStatsText;
+
+fn update_status_right(
+    mode: Res<GizmoMode>,
+    space: Res<GizmoSpace>,
+    modal: Res<ModalTransformState>,
+    edit_mode: Res<EditMode>,
+    draw_state: Res<DrawBrushState>,
+    mut text_query: Query<&mut Text, With<StatusBarRight>>,
+) {
+    if !mode.is_changed()
+        && !space.is_changed()
+        && !modal.is_changed()
+        && !edit_mode.is_changed()
+        && !draw_state.is_changed()
+    {
+        return;
+    }
+    let Ok(mut text) = text_query.single_mut() else {
+        return;
+    };
+
+    // Show draw brush mode status
+    if draw_state.active.is_some() {
+        text.0 = "Draw Brush".to_string();
+        return;
+    }
+
+    // Show brush edit mode info
+    if let EditMode::BrushEdit(sub_mode) = *edit_mode {
+        let sub_str = match sub_mode {
+            BrushEditMode::Face => "Face",
+            BrushEditMode::Vertex => "Vertex",
+            BrushEditMode::Edge => "Edge",
+            BrushEditMode::Clip => "Clip",
+        };
+        text.0 = format!("Edit: {sub_str}");
+        return;
+    }
+
+    // Show modal operation info when active
+    if let Some(ref active) = modal.active {
+        let op_str = match active.op {
+            ModalOp::Grab => "Grab",
+            ModalOp::Rotate => "Rotate",
+            ModalOp::Scale => "Scale",
+        };
+        text.0 = format!("{op_str} | LMB confirm, RMB cancel");
+        return;
+    }
+
+    let mode_str = match *mode {
+        GizmoMode::Translate => "Translate",
+        GizmoMode::Rotate => "Rotate",
+        GizmoMode::Scale => "Scale",
+    };
+    let space_str = match *space {
+        GizmoSpace::World => "World",
+        GizmoSpace::Local => "Local",
+    };
+
+    text.0 = format!("{mode_str} ({space_str})");
+}
+
+/// System to update the scene stats text in the hierarchy panel footer.
+pub fn update_scene_stats(
+    scene_entities: Query<Entity, (With<Transform>, Without<EditorEntity>)>,
+    meshes: Query<(), (With<Mesh3d>, Without<EditorEntity>)>,
+    point_lights: Query<(), (With<PointLight>, Without<EditorEntity>)>,
+    dir_lights: Query<(), (With<DirectionalLight>, Without<EditorEntity>)>,
+    spot_lights: Query<(), (With<SpotLight>, Without<EditorEntity>)>,
+    cameras: Query<(), (With<Camera3d>, Without<EditorEntity>)>,
+    mut text_query: Query<&mut Text, With<SceneStatsText>>,
+) {
+    let Ok(mut text) = text_query.single_mut() else {
+        return;
+    };
+
+    let total = scene_entities.iter().count();
+    let mesh_count = meshes.iter().count();
+    let light_count =
+        point_lights.iter().count() + dir_lights.iter().count() + spot_lights.iter().count();
+    let camera_count = cameras.iter().count();
+
+    let new_text = format!(
+        "{total} entities  {mesh_count} meshes  {light_count} lights  {camera_count} cameras"
+    );
+    if text.0 != new_text {
+        text.0 = new_text;
+    }
 }

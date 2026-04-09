@@ -28,7 +28,7 @@ fn on_build_navmesh(
     state.status = NavmeshStatus::Building;
 }
 
-/// Convert region settings without AABB (for BRP fetch — the remote app determines bounds).
+/// Convert region settings without AABB (for BRP fetch, the remote app determines bounds).
 pub(super) fn region_to_settings_without_transform(
     region: &jackdaw_jsn::NavmeshRegion,
 ) -> NavmeshSettings {

@@ -11,7 +11,8 @@ pub use bevy_ui_text_input::{TextInputBuffer, TextInputQueue};
 use crate::cursor::{ActiveCursor, HoverCursor};
 use crate::icons::EditorFont;
 use crate::tokens::{
-    BORDER_COLOR, PRIMARY_COLOR, TEXT_BODY_COLOR, TEXT_MUTED_COLOR, TEXT_SIZE, TEXT_SIZE_SM,
+    AXIS_LABEL_BG, BORDER_COLOR, ELEVATED_BG, PRIMARY_COLOR, SHADOW_COLOR_LIGHT, TEXT_BODY_COLOR,
+    TEXT_MUTED_COLOR, TEXT_SIZE, TEXT_SIZE_SM,
 };
 
 pub fn plugin(app: &mut App) {
@@ -24,10 +25,9 @@ pub fn plugin(app: &mut App) {
             (
                 handle_focus_style,
                 handle_numeric_increment,
-                handle_unfocus,
+                (handle_unfocus, handle_clamp_on_unfocus).chain(),
                 handle_drag_value,
                 handle_click_to_focus,
-                handle_clamp_on_unfocus,
                 sync_text_edit_values,
             ),
         )
@@ -80,7 +80,12 @@ impl TextEditVariant {
 
 #[derive(Clone)]
 pub enum TextEditPrefix {
-    Label { label: String, size: f32 },
+    Label {
+        label: String,
+        size: f32,
+        /// Optional accent color shown as a 2px left border on the label.
+        color: Option<Color>,
+    },
 }
 
 #[derive(Component)]
@@ -211,6 +216,7 @@ impl TextEditProps {
         self.prefix = Some(TextEditPrefix::Label {
             label: "↔".to_string(),
             size: TEXT_SIZE,
+            color: None,
         });
         self.min = f32::MIN as f64;
         self.max = f32::MAX as f64;
@@ -222,6 +228,7 @@ impl TextEditProps {
         self.prefix = Some(TextEditPrefix::Label {
             label: "↔".to_string(),
             size: TEXT_SIZE,
+            color: None,
         });
         self.min = i32::MIN as f64;
         self.max = i32::MAX as f64;
@@ -242,16 +249,16 @@ pub fn text_edit(props: TextEditProps) -> impl Bundle {
         max,
         allow_empty,
         drag_bottom,
-        grow,
+        grow: _,
     } = props;
 
     (
         Node {
             flex_direction: FlexDirection::Column,
             row_gap: px(3),
-            flex_grow: if grow { 1.0 } else { 0.0 },
+            flex_grow: 1.0,
             flex_shrink: 1.0,
-            flex_basis: px(0),
+            min_width: px(0),
             ..default()
         },
         TextEditConfig {
@@ -308,20 +315,36 @@ fn setup_text_edit_input(
             FilterType::Integer => TextInputFilter::Integer,
         });
 
+        let has_prefix = config.prefix.is_some();
         let wrapper_entity = commands
             .spawn((
                 Node {
                     width: percent(100),
                     height: px(INPUT_HEIGHT),
-                    padding: UiRect::all(px(6)),
-                    border: UiRect::all(px(1)),
-                    border_radius: BorderRadius::all(px(2)),
-                    align_items: AlignItems::Center,
+                    // If prefix, no left padding so the label sits flush at the edge
+                    padding: if has_prefix {
+                        UiRect::new(px(0), px(8), px(0), px(0))
+                    } else {
+                        UiRect::axes(px(8), px(4))
+                    },
+                    border_radius: BorderRadius::all(px(4)),
+                    // Stretch so prefix fills full height
+                    align_items: if has_prefix {
+                        AlignItems::Stretch
+                    } else {
+                        AlignItems::Center
+                    },
                     column_gap: px(6),
                     ..default()
                 },
-                BackgroundColor(Color::NONE),
-                BorderColor::all(BORDER_COLOR),
+                BackgroundColor(ELEVATED_BG),
+                BoxShadow(vec![ShadowStyle {
+                    x_offset: Val::ZERO,
+                    y_offset: Val::ZERO,
+                    blur_radius: Val::Px(1.0),
+                    spread_radius: Val::Px(1.0),
+                    color: SHADOW_COLOR_LIGHT,
+                }]),
                 Interaction::None,
                 Hovered::default(),
                 HoverCursor(bevy::window::SystemCursorIcon::Text),
@@ -331,15 +354,22 @@ fn setup_text_edit_input(
         commands.entity(entity).add_child(wrapper_entity);
 
         if is_numeric && !config.drag_bottom {
-            const HITBOX_WIDTH: f32 = INPUT_HEIGHT * 0.9;
+            // When there's a prefix (XYZ label), the drag hitbox covers ONLY the
+            // label area so clicking the value area still lets you type.
+            // Without a prefix, the hitbox covers the left portion of the input.
+            let (hitbox_left, hitbox_width) = if has_prefix {
+                (0.0, AFFIX_SIZE as f32)
+            } else {
+                (0.0, INPUT_HEIGHT * 0.9)
+            };
             let hitbox = commands
                 .spawn((
                     DragHitbox::default(),
                     Node {
                         position_type: PositionType::Absolute,
-                        width: px(HITBOX_WIDTH),
+                        width: px(hitbox_width),
                         height: px(INPUT_HEIGHT),
-                        left: px(0),
+                        left: px(hitbox_left),
                         ..default()
                     },
                     ZIndex(10),
@@ -353,22 +383,52 @@ fn setup_text_edit_input(
 
         if let Some(ref prefix) = config.prefix {
             let prefix_entity = match prefix {
-                TextEditPrefix::Label { label, size } => commands
-                    .spawn((
-                        Text::new(label),
-                        TextFont {
-                            font: font.clone(),
-                            font_size: *size,
-                            ..default()
-                        },
-                        TextColor(TEXT_BODY_COLOR.with_alpha(0.5).into()),
-                        TextLayout::new_with_justify(Justify::Center),
-                        Node {
-                            width: px(AFFIX_SIZE),
-                            ..default()
-                        },
-                    ))
-                    .id(),
+                TextEditPrefix::Label { label, size, color } => {
+                    let has_color = color.is_some();
+                    let text_color = if has_color {
+                        crate::tokens::TEXT_PRIMARY
+                    } else {
+                        TEXT_BODY_COLOR.with_alpha(0.5).into()
+                    };
+
+                    // Container node for layout (bg, border, sizing)
+                    let prefix_id = commands
+                        .spawn((
+                            Node {
+                                width: px(AFFIX_SIZE),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: if has_color {
+                                    UiRect::left(px(2))
+                                } else {
+                                    UiRect::default()
+                                },
+                                border_radius: if has_color {
+                                    BorderRadius::left(px(2.5))
+                                } else {
+                                    BorderRadius::default()
+                                },
+                                ..default()
+                            },
+                            children![(
+                                Text::new(label),
+                                TextFont {
+                                    font: font.clone(),
+                                    font_size: *size,
+                                    ..default()
+                                },
+                                TextColor(text_color),
+                                TextLayout::new_with_justify(Justify::Center),
+                            )],
+                        ))
+                        .id();
+                    if let Some(c) = color {
+                        commands
+                            .entity(prefix_id)
+                            .insert((BorderColor::all(*c), BackgroundColor(AXIS_LABEL_BG)));
+                    }
+                    prefix_id
+                }
             };
             commands.entity(wrapper_entity).add_child(prefix_entity);
         }

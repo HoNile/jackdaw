@@ -56,7 +56,7 @@ pub fn save_entity_template(world: &mut World, name: &str) {
     let registry = world.resource::<AppTypeRegistry>().clone();
     let registry = registry.read();
 
-    // Component types to skip — only computed/internal
+    // Component types to skip (only computed/internal).
     let skip_ids: HashSet<TypeId> = HashSet::from([
         TypeId::of::<GlobalTransform>(),
         TypeId::of::<InheritedVisibility>(),
@@ -231,7 +231,7 @@ fn spawn_jsn_entities(
         for (i, jsn) in jsn_entities.iter().enumerate() {
             for (type_path, value) in &jsn.components {
                 let Some(registration) = registry.get_with_type_path(type_path) else {
-                    warn!("Unknown type '{type_path}' — skipping");
+                    warn!("Unknown type '{type_path}', skipping");
                     continue;
                 };
                 let Some(reflect_component) = registration.data::<ReflectComponent>() else {
@@ -250,7 +250,7 @@ fn spawn_jsn_entities(
                     &mut deser_processor,
                 );
                 let Ok(reflected) = deserializer.deserialize(value) else {
-                    warn!("Failed to deserialize '{type_path}' — skipping");
+                    warn!("Failed to deserialize '{type_path}', skipping");
                     continue;
                 };
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -261,7 +261,7 @@ fn spawn_jsn_entities(
                     );
                 }));
                 if result.is_err() {
-                    warn!("Panic while inserting component '{type_path}' — skipping");
+                    warn!("Panic while inserting component '{type_path}', skipping");
                 }
             }
         }

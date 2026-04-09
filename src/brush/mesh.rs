@@ -158,7 +158,7 @@ pub fn regenerate_brush_meshes(
             let tangent = [u_axis.x, u_axis.y, u_axis.z, w];
             let tangents: Vec<[f32; 4]> = vec![tangent; indices.len()];
 
-            // Fan triangulate — local indices (0..positions.len())
+            // Fan triangulate: local indices (0..positions.len())
             let local_tris = triangulate_face(&(0..indices.len()).collect::<Vec<_>>());
             let flat_indices: Vec<u32> =
                 local_tris.iter().flat_map(|t| t.iter().copied()).collect();

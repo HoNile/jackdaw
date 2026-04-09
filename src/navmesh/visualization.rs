@@ -439,7 +439,7 @@ fn sync_navmesh_viz_visibility(
         return;
     }
 
-    // Scene visual meshes — Visibility toggle
+    // Scene visual meshes: visibility toggle.
     let visual_vis = if viz_config.show_visual {
         Visibility::Inherited
     } else {
@@ -449,7 +449,7 @@ fn sync_navmesh_viz_visibility(
         *vis = visual_vis;
     }
 
-    // Obstacle gizmo — clear/repopulate from mesh data
+    // Obstacle gizmo: clear/repopulate from mesh data.
     for (mesh3d, gizmo) in &obstacles {
         if let Some(asset) = gizmo_assets.get_mut(&gizmo.handle) {
             asset.clear();
@@ -463,7 +463,7 @@ fn sync_navmesh_viz_visibility(
         }
     }
 
-    // Detail fill meshes — Visibility toggle
+    // Detail fill meshes: visibility toggle.
     let detail_fill_vis = if viz_config.show_detail_mesh {
         Visibility::Inherited
     } else {
@@ -473,7 +473,7 @@ fn sync_navmesh_viz_visibility(
         *vis = detail_fill_vis;
     }
 
-    // Polygon fill meshes — Visibility toggle
+    // Polygon fill meshes: visibility toggle.
     let poly_fill_vis = if viz_config.show_polygon_mesh {
         Visibility::Inherited
     } else {
@@ -483,7 +483,7 @@ fn sync_navmesh_viz_visibility(
         *vis = poly_fill_vis;
     }
 
-    // Detail gizmo — clear/repopulate
+    // Detail gizmo: clear/repopulate.
     for gizmo in &detail_gizmos {
         if let Some(asset) = gizmo_assets.get_mut(&gizmo.handle) {
             asset.clear();
@@ -496,7 +496,7 @@ fn sync_navmesh_viz_visibility(
         }
     }
 
-    // Polygon gizmo — clear/repopulate
+    // Polygon gizmo: clear/repopulate.
     for gizmo in &poly_gizmos {
         if let Some(asset) = gizmo_assets.get_mut(&gizmo.handle) {
             asset.clear();

@@ -133,6 +133,7 @@ impl Plugin for InspectorPlugin {
                     reflect_fields::refresh_inspector_fields,
                     reflect_fields::refresh_enum_variants,
                     component_picker::filter_component_picker,
+                    component_picker::close_picker_on_escape,
                     brush_display::update_brush_face_properties,
                     component_display::filter_inspector_components,
                 )
@@ -178,7 +179,7 @@ pub struct ComponentDisplay;
 pub(super) struct ComponentDisplayBody;
 
 #[derive(Component)]
-pub(super) struct AddComponentButton;
+pub struct AddComponentButton;
 
 /// Marker for the component picker panel
 #[derive(Component)]
@@ -206,10 +207,6 @@ pub(super) struct ComponentPickerSectionHeader {
 /// Marker for the search input in the inspector.
 #[derive(Component)]
 pub(super) struct InspectorSearch;
-
-/// Marker for the collapse-all / expand-all toggle button.
-#[derive(Component)]
-pub(super) struct CollapseAllButton;
 
 /// Stores the component short name on a `ComponentDisplay` for search filtering.
 #[derive(Component)]

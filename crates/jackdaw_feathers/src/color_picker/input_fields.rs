@@ -272,6 +272,7 @@ fn spawn_single_input_field(
         props = props.with_prefix(TextEditPrefix::Label {
             label: "#".to_string(),
             size: TEXT_SIZE,
+            color: None,
         });
     }
 

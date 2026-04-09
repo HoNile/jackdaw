@@ -1,17 +1,17 @@
-use bevy::prelude::*;
+use bevy::{asset::AssetId, prelude::*};
 pub use lucide_icons::Icon;
 
 /// Resource holding the loaded Lucide icon font handle.
 #[derive(Resource)]
 pub struct IconFont(pub Handle<Font>);
 
-/// Resource holding the loaded editor body font (InterVariable).
+/// Resource holding the loaded editor body font (FiraSans).
 #[derive(Resource)]
 pub struct EditorFont(pub Handle<Font>);
 
 pub struct IconFontPlugin;
 
-const INTER_VARIABLE_BYTES: &[u8] = include_bytes!("../fonts/InterVariable.ttf");
+const FIRA_SANS_BYTES: &[u8] = include_bytes!("../fonts/FiraSans-Regular.ttf");
 
 impl Plugin for IconFontPlugin {
     fn build(&self, app: &mut App) {
@@ -23,9 +23,14 @@ impl Plugin for IconFontPlugin {
             .expect("Failed to load Lucide icon font");
         let icon_handle = fonts.add(icon_font);
 
-        let editor_font = Font::try_from_bytes(INTER_VARIABLE_BYTES.to_vec())
-            .expect("Failed to load InterVariable font");
-        let editor_font_handle = fonts.add(editor_font);
+        let editor_font =
+            Font::try_from_bytes(FIRA_SANS_BYTES.to_vec()).expect("Failed to load FiraSans font");
+        let editor_font_handle = fonts.add(editor_font.clone());
+
+        // Also override Bevy's default font (AssetId::default()) so that ALL Text nodes
+        // that don't specify an explicit font handle use FiraSans instead of FiraMono.
+        // This ensures ThemedText and any other Text without `font:` use our editor font.
+        let _ = fonts.insert(AssetId::default(), editor_font);
 
         app.insert_resource(IconFont(icon_handle));
         app.insert_resource(EditorFont(editor_font_handle));

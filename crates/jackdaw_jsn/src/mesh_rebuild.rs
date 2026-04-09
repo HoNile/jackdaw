@@ -15,7 +15,7 @@ use jackdaw_geometry::{
 };
 
 /// Simplified runtime mesh rebuild for consumers (no editor material palette,
-/// no BrushFaceEntity, no texture cache — just a single mesh child per brush).
+/// no BrushFaceEntity, no texture cache, just a single mesh child per brush).
 pub fn rebuild_brush_meshes(
     mut commands: Commands,
     new_brushes: Query<(Entity, &Brush), Added<Brush>>,

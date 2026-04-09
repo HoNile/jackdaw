@@ -219,7 +219,7 @@ pub(super) fn brush_face_interact(
     }
 
     if !in_face_edit && drag_state.pending.is_none() && !drag_state.active {
-        // Not in face mode — Shift+click or Alt+click enters quick face edit
+        // Not in face mode. Shift+click or Alt+click enters quick face edit
         let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
         let alt = keyboard.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
         if !(shift || alt) || !mouse.just_pressed(MouseButton::Left) {
@@ -431,7 +431,7 @@ pub(super) fn brush_face_interact(
                 }
             }
             FaceExtrudeMode::Extend => {
-                // Compute extend depth from mouse projection — don't modify original brush
+                // Compute extend depth from mouse projection, don't modify original brush
                 if drag_state.extend_face_polygon.is_empty() {
                     drag_state.active = false;
                     return;

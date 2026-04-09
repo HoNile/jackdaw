@@ -12,7 +12,7 @@ Thank you for your interest in contributing to Jackdaw! This document covers the
   rustup default nightly
   ```
 - **System dependencies** - GPU drivers with Vulkan support (or Metal on macOS)
-- **Linux extras** — `libudev-dev`, `libasound2-dev`, `libwayland-dev` (or equivalent for your distro)
+- **Linux extras** - `libudev-dev`, `libasound2-dev`, `libwayland-dev` (or equivalent for your distro)
 
 ### Clone and Build
 

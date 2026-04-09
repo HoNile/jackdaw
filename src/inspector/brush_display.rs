@@ -71,7 +71,7 @@ pub(super) fn spawn_brush_display(
         ChildOf(parent),
     ));
 
-    // Material summary — shows unique materials used by this brush
+    // Material summary: shows unique materials used by this brush.
     spawn_material_summary(commands, parent, brush, materials);
 
     // Face properties container -- populated dynamically by update_brush_face_properties
@@ -204,7 +204,7 @@ fn spawn_material_summary(
         ));
     }
 
-    // Clear All button — only if at least one face has a material
+    // Clear All button, only if at least one face has a material.
     if any_has_material {
         let clear_all_btn = commands
             .spawn((
