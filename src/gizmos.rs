@@ -341,19 +341,24 @@ fn handle_gizmo_drag(
 
         match *mode {
             GizmoMode::Translate => {
+                let drag_start_pos = drag_state.start_transform.translation;
+
                 // Project mouse movement onto axis in screen space
-                let Some(origin_screen) = camera.world_to_viewport(cam_tf, gizmo_pos).ok() else {
+                let Some(origin_screen) = camera.world_to_viewport(cam_tf, drag_start_pos).ok()
+                else {
                     return;
                 };
-                let Some(axis_screen) = camera.world_to_viewport(cam_tf, gizmo_pos + axis_dir).ok()
+                let Some(axis_screen) = camera
+                    .world_to_viewport(cam_tf, drag_start_pos + axis_dir)
+                    .ok()
                 else {
                     return;
                 };
                 let screen_axis = axis_screen - origin_screen;
                 let len_sq = screen_axis.length_squared();
 
+                //prevents divide by 0 when screen axis is tiny
                 if len_sq < EPSILON {
-                    //prevents divide by 0 when screen axis is tiny
                     return;
                 }
 
