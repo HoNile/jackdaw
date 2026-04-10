@@ -4334,6 +4334,7 @@ dependencies = [
  "jackdaw_feathers",
  "jackdaw_geometry",
  "jackdaw_jsn",
+ "jackdaw_node_graph",
  "jackdaw_remote",
  "jackdaw_terrain",
  "jackdaw_widgets",
@@ -4397,6 +4398,18 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jackdaw_node_graph"
+version = "0.3.0"
+dependencies = [
+ "bevy",
+ "bevy_monitors",
+ "jackdaw_commands",
+ "jackdaw_feathers",
+ "jackdaw_widgets",
+ "serde",
 ]
 
 [[package]]

@@ -29,6 +29,7 @@ jackdaw_widgets.workspace = true
 jackdaw_commands.workspace = true
 jackdaw_terrain.workspace = true
 jackdaw_remote.workspace = true
+jackdaw_node_graph.workspace = true
 jackdaw_avian_integration.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -58,6 +59,7 @@ jackdaw_widgets = { version = "0.3.0", path = "crates/jackdaw_widgets" }
 jackdaw_commands = { version = "0.3.0", path = "crates/jackdaw_commands" }
 jackdaw_terrain = { version = "0.3.0", path = "crates/jackdaw_terrain" }
 jackdaw_remote = { version = "0.3.0", path = "crates/jackdaw_remote" }
+jackdaw_node_graph = { version = "0.3.0", path = "crates/jackdaw_node_graph" }
 noise = "0.9"
 rand = "0.9"
 serde = "1"

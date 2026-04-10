@@ -349,6 +349,31 @@ fn setup_text_edit_input(
                 Hovered::default(),
                 HoverCursor(bevy::window::SystemCursorIcon::Text),
             ))
+            .observe(
+                |mut ev: On<bevy::picking::events::Pointer<bevy::picking::events::DragStart>>| {
+                    ev.propagate(false);
+                },
+            )
+            .observe(
+                |mut ev: On<bevy::picking::events::Pointer<bevy::picking::events::Drag>>| {
+                    ev.propagate(false);
+                },
+            )
+            .observe(
+                |mut ev: On<bevy::picking::events::Pointer<bevy::picking::events::DragEnd>>| {
+                    ev.propagate(false);
+                },
+            )
+            .observe(
+                |mut ev: On<bevy::picking::events::Pointer<bevy::picking::events::Click>>| {
+                    ev.propagate(false);
+                },
+            )
+            .observe(
+                |mut ev: On<bevy::picking::events::Pointer<bevy::picking::events::Press>>| {
+                    ev.propagate(false);
+                },
+            )
             .id();
 
         commands.entity(entity).add_child(wrapper_entity);
