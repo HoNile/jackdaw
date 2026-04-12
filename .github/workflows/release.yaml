@@ -46,12 +46,16 @@ jobs:
             jackdaw_geometry
             jackdaw_widgets
             jackdaw_commands
-            jackdaw_camera
             jackdaw_terrain
-            jackdaw_jsn
-            jackdaw_feathers
             jackdaw_avian_integration
             jackdaw_remote
+            jackdaw_panels
+            jackdaw_jsn
+            jackdaw_camera
+            jackdaw_feathers
+            jackdaw_runtime
+            jackdaw_node_graph
+            jackdaw_animation
           )
 
           for crate in "${crates[@]}"; do
