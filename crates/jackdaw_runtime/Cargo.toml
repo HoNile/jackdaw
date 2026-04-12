@@ -1,0 +1,18 @@
+[package]
+name = "jackdaw_runtime"
+version = "0.3.0"
+edition = "2024"
+description = "Runtime scene loading for games built with the Jackdaw editor"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jbuehler23/jackdaw"
+
+[dependencies]
+bevy.workspace = true
+jackdaw_jsn.workspace = true
+jackdaw_geometry.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror = "2"
+
+[lints]
+workspace = true
