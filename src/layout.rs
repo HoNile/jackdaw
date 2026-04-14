@@ -210,8 +210,8 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
                             split_panel::panel_group(
                                 0.1,
                                 (
-                                    // Left column: hierarchy + project files (~266px default, ratio 1)
-                                    Spawn((split_panel::panel(1), left_column())),
+                                    // Left column: single anchor host, pre-split by default
+                                    Spawn((split_panel::panel(1), left_dock_area())),
                                     Spawn(split_panel::panel_handle()),
                                     // Center column: viewport + bottom dock (ratio 4).
                                     Spawn((
@@ -378,58 +378,18 @@ fn play_pause_controls() -> impl Bundle {
     )
 }
 
-/// Left column: Scene Tree panel (top) + Project Files panel (bottom), resizable split
-fn left_column() -> impl Bundle {
-    (
-        EditorEntity,
-        Node {
-            width: percent(100),
-            height: percent(100),
-            flex_direction: FlexDirection::Column,
-            ..Default::default()
-        },
-        split_panel::panel_group(
-            0.15,
-            (
-                Spawn((split_panel::panel(3), left_top_dock_area())),
-                Spawn(split_panel::panel_handle()),
-                Spawn((split_panel::panel(1), left_bottom_dock_area())),
-            ),
-        ),
-    )
-}
-
-fn left_top_dock_area() -> impl Bundle {
+/// Left column: a single anchor host the user can split like the right
+/// sidebar. The default layout pre-splits it vertically (Scene Tree +
+/// Import on top, Project Files on bottom) via
+/// [`apply_default_splits`] on first launch.
+fn left_dock_area() -> impl Bundle {
     (
         jackdaw_panels::reconcile::AnchorHost {
-            anchor_id: "left_top".into(),
+            anchor_id: "left".into(),
             default_style: jackdaw_panels::DockAreaStyle::TabBar,
         },
         jackdaw_panels::DockArea {
-            id: "left_top".into(),
-            style: jackdaw_panels::DockAreaStyle::TabBar,
-        },
-        EditorEntity,
-        Node {
-            width: percent(100),
-            height: percent(100),
-            flex_direction: FlexDirection::Column,
-            overflow: Overflow::clip(),
-            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
-            ..Default::default()
-        },
-        BackgroundColor(tokens::PANEL_BG),
-    )
-}
-
-fn left_bottom_dock_area() -> impl Bundle {
-    (
-        jackdaw_panels::reconcile::AnchorHost {
-            anchor_id: "left_bottom".into(),
-            default_style: jackdaw_panels::DockAreaStyle::TabBar,
-        },
-        jackdaw_panels::DockArea {
-            id: "left_bottom".into(),
+            id: "left".into(),
             style: jackdaw_panels::DockAreaStyle::TabBar,
         },
         EditorEntity,

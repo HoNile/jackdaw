@@ -16,6 +16,7 @@ use jackdaw_feathers::tokens;
 use crate::area::{
     ActiveDockWindow, DockArea, DockAreaStyle, DockTab, DockTabContent, DockWindow,
 };
+use crate::drag::DockDragState;
 use crate::registry::WindowRegistry;
 use crate::sidebar::{self, DockSidebarIcon};
 use crate::split::{Panel, PanelGroup, PanelHandle};
@@ -40,7 +41,13 @@ impl Plugin for ReconcilePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DockTree>().add_systems(
             Update,
-            (seed_anchors_from_hosts, reconcile_tree, sync_leaf_visuals).chain(),
+            (
+                seed_anchors_from_hosts,
+                reconcile_tree,
+                show_empty_anchors_during_drag,
+                sync_leaf_visuals,
+            )
+                .chain(),
         );
     }
 }
@@ -49,6 +56,18 @@ impl Plugin for ReconcilePlugin {
 /// anchors + entities exist before saved-layout application runs.
 pub fn run_initial_reconcile(world: &mut World) {
     seed_anchors_from_hosts(world);
+    reconcile_tree(world);
+}
+
+/// Public for editor flows that want to seed before applying defaults
+/// then reconcile in a single materialization pass.
+pub fn seed_anchors(world: &mut World) {
+    seed_anchors_from_hosts(world);
+}
+
+/// Public for editor flows that build the final tree shape (saved or
+/// defaults) up front and then materialize once.
+pub fn reconcile(world: &mut World) {
     reconcile_tree(world);
 }
 
@@ -354,6 +373,69 @@ fn collect_split_children(
     Some((a, h, b))
 }
 
+/// While a drag is in progress, force every empty anchor host to be
+/// visible so the user can drop a window back into it. On the transition
+/// out of dragging, re-hide them (the reconciler also handles this on
+/// successful drops, but cancels and no-op drops don't trigger the tree).
+fn show_empty_anchors_during_drag(
+    drag_state: Res<DockDragState>,
+    mut prev_dragging: Local<bool>,
+    hosts: Query<(Entity, &NodeBinding, &ChildOf), With<AnchorHost>>,
+    children_query: Query<&Children>,
+    handle_marker: Query<(), With<PanelHandle>>,
+    mut nodes: Query<&mut Node>,
+    mut panels: Query<&mut Panel>,
+    tree: Res<DockTree>,
+) {
+    let now_dragging = matches!(*drag_state, DockDragState::Dragging { .. });
+    let state_changed = now_dragging != *prev_dragging;
+    *prev_dragging = now_dragging;
+
+    if !state_changed && !now_dragging {
+        return;
+    }
+
+    let target = if now_dragging {
+        Display::Flex
+    } else {
+        Display::None
+    };
+
+    for (host, binding, child_of) in &hosts {
+        let Some(leaf) = tree.get(binding.0).and_then(|n| n.as_leaf()) else {
+            continue;
+        };
+        if !leaf.windows.is_empty() {
+            continue;
+        }
+
+        let parent = child_of.parent();
+        let adjacent_handle = children_query.get(parent).ok().and_then(|siblings| {
+            let idx = siblings.iter().position(|e| e == host)?;
+            [idx.checked_sub(1), Some(idx + 1)]
+                .into_iter()
+                .flatten()
+                .filter_map(|i| siblings.get(i).copied())
+                .find(|&e| handle_marker.contains(e))
+        });
+
+        let mut display_changed = false;
+        for e in std::iter::once(host).chain(adjacent_handle) {
+            if let Ok(mut node) = nodes.get_mut(e) {
+                if node.display != target {
+                    node.display = target;
+                    display_changed = true;
+                }
+            }
+        }
+        if display_changed {
+            if let Ok(mut p) = panels.get_mut(host) {
+                p.set_changed();
+            }
+        }
+    }
+}
+
 /// Show or hide a host entity and its adjacent `PanelHandle` sibling so
 /// an empty anchor doesn't leave a stub panel + dangling resize handle.
 fn set_host_visible(world: &mut World, entity: Entity, visible: bool) {
@@ -380,11 +462,22 @@ fn set_host_visible(world: &mut World, entity: Entity, visible: bool) {
             }
         }
     }
+    let mut display_changed = false;
     for e in to_toggle {
         if let Some(mut node) = world.entity_mut(e).get_mut::<Node>() {
             if node.display != target {
                 node.display = target;
+                display_changed = true;
             }
+        }
+    }
+
+    // `recalculate_changed_panels` only watches `Changed<Panel>`, so a
+    // `Display` toggle alone won't re-run the percentage math. Bump the
+    // host's `Panel` change tick to force a recompute next frame.
+    if display_changed {
+        if let Some(mut panel) = world.entity_mut(entity).get_mut::<Panel>() {
+            panel.set_changed();
         }
     }
 }

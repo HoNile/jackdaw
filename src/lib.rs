@@ -162,13 +162,7 @@ impl Plugin for EditorPlugin {
             .init_resource::<jackdaw_jsn::SceneJsnAst>()
             .add_systems(
                 OnEnter(AppState::Editor),
-                (
-                    spawn_layout,
-                    jackdaw_panels::reconcile::run_initial_reconcile,
-                    populate_menu,
-                    apply_saved_layout,
-                )
-                    .chain(),
+                (spawn_layout, init_layout, populate_menu).chain(),
             )
             .add_systems(OnExit(AppState::Editor), cleanup_editor)
             .add_systems(
@@ -1925,9 +1919,18 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
             if let Some(id) = window_id {
                 let id = id.to_string();
                 commands.queue(move |world: &mut World| {
-                    let leaf_id = world
-                        .resource::<jackdaw_panels::tree::DockTree>()
-                        .anchor("left_top");
+                    // Add into the first leaf reachable from the "left"
+                    // anchor — if the user has split it, we still land in
+                    // whichever sub-panel the walker finds first.
+                    let leaf_id = {
+                        let tree = world.resource::<jackdaw_panels::tree::DockTree>();
+                        let Some(root) = tree.anchor("left") else {
+                            return;
+                        };
+                        tree.leaves_under(root)
+                            .first()
+                            .map(|(id, _)| *id)
+                    };
                     let Some(leaf_id) = leaf_id else {
                         return;
                     };
@@ -2251,69 +2254,78 @@ fn auto_save_layout_on_change(
     }
 }
 
-fn apply_saved_layout(mut commands: Commands) {
-    commands.queue(|world: &mut World| {
-        // Try the new tree-format first, fall back to legacy LayoutState.
-        let layout_json = world
-            .get_resource::<crate::project::ProjectRoot>()
-            .and_then(|p| p.config.project.layout.clone());
+/// Build the final DockTree (saved or default-split) BEFORE the
+/// reconciler materializes any content. This way each window's `build_fn`
+/// runs exactly once into its final home — no rebuild churn that would
+/// despawn freshly-spawned content while its deferred init systems
+/// (project_files refresh, material_browser scan, etc.) still hold
+/// pointers to it.
+fn init_layout(world: &mut World) {
+    let layout_json = world
+        .get_resource::<crate::project::ProjectRoot>()
+        .and_then(|p| p.config.project.layout.clone());
 
-        if let Some(json) = layout_json.clone() {
-            if let Ok(tree) = serde_json::from_value::<jackdaw_panels::tree::DockTree>(json) {
+    let mut loaded_tree = false;
+    if let Some(json) = layout_json {
+        match serde_json::from_value::<jackdaw_panels::tree::DockTree>(json) {
+            Ok(tree) => {
                 world.insert_resource(tree);
-                jackdaw_panels::reconcile::run_initial_reconcile(world);
+                loaded_tree = true;
                 info!("Applied saved DockTree layout");
-                return;
             }
-        }
-
-        // Legacy LayoutState fallback (active window + Panel ratios).
-        let Some(layout_json) = layout_json else {
-            return;
-        };
-
-        let layout: jackdaw_panels::LayoutState = match serde_json::from_value(layout_json) {
-            Ok(l) => l,
             Err(e) => {
-                warn!("Failed to deserialize saved layout: {e}");
-                return;
-            }
-        };
-
-        let mut area_query = world.query::<(Entity, &jackdaw_panels::DockArea)>();
-        let areas: Vec<(Entity, String)> = area_query
-            .iter(world)
-            .map(|(e, a)| (e, a.id.clone()))
-            .collect();
-
-        for (area_entity, area_id) in areas {
-            let Some(state) = layout.areas.get(&area_id) else {
-                continue;
-            };
-
-            if let Some(active) = &state.active {
-                let leaf_id = world
-                    .resource::<jackdaw_panels::tree::DockTree>()
-                    .anchor(&area_id);
-                if let Some(leaf) = leaf_id {
-                    world
-                        .resource_mut::<jackdaw_panels::tree::DockTree>()
-                        .set_active(leaf, active);
-                }
-            }
-
-            if state.size_ratio > 0.0 {
-                if let Some(mut panel) = world
-                    .entity_mut(area_entity)
-                    .get_mut::<jackdaw_panels::Panel>()
-                {
-                    panel.ratio = state.size_ratio;
-                }
+                warn!("Saved layout couldn't be parsed as DockTree ({e}); seeding defaults");
             }
         }
+    }
 
-        info!("Applied saved layout from project.jsn");
-    });
+    if !loaded_tree {
+        jackdaw_panels::reconcile::seed_anchors(world);
+        apply_default_splits(world);
+    }
+
+    jackdaw_panels::reconcile::reconcile(world);
+}
+
+/// First-run / reset layout: the `left` anchor is seeded as a single
+/// leaf with all left-area windows. Split it so Project Files lives in
+/// its own bottom pane (matching the original hardcoded layout).
+fn apply_default_splits(world: &mut World) {
+    use jackdaw_panels::tree::{DockNode, DockTree, Edge};
+
+    let left_root = match world.resource::<DockTree>().anchor("left") {
+        Some(id) => id,
+        None => return,
+    };
+    let already_split = !matches!(
+        world.resource::<DockTree>().get(left_root),
+        Some(DockNode::Leaf(_))
+    );
+    if already_split {
+        return;
+    }
+    let has_project_files = world
+        .resource::<DockTree>()
+        .get(left_root)
+        .and_then(|n| n.as_leaf())
+        .map(|l| l.windows.iter().any(|w| w == "jackdaw.project_files"))
+        .unwrap_or(false);
+    if !has_project_files {
+        return;
+    }
+
+    let mut tree = world.resource_mut::<DockTree>();
+    tree.remove_window("jackdaw.project_files");
+    if let Some(new_leaf) = tree.split(
+        left_root,
+        Edge::Bottom,
+        "jackdaw.project_files".to_string(),
+    ) {
+        if let Some(split_id) = tree.parent_of(new_leaf) {
+            tree.set_fraction(split_id, 0.75);
+        }
+    }
+    info!("Applied default left-pane split (project files on bottom)");
 }
 
 fn sync_icon_font(
@@ -2397,7 +2409,7 @@ fn register_all_dock_windows(mut registry: ResMut<jackdaw_panels::WindowRegistry
         id: "jackdaw.hierarchy".into(),
         name: "Scene Tree".into(),
         icon: None,
-        default_area: "left_top".into(),
+        default_area: "left".into(),
         priority: 0,
         build: std::sync::Arc::new(|world, parent| {
             let icon_font = world
@@ -2415,7 +2427,7 @@ fn register_all_dock_windows(mut registry: ResMut<jackdaw_panels::WindowRegistry
         id: "jackdaw.import".into(),
         name: "Import".into(),
         icon: None,
-        default_area: "left_top".into(),
+        default_area: "left".into(),
         priority: 1,
         build: std::sync::Arc::new(|world, parent| {
             world.spawn((
@@ -2441,8 +2453,8 @@ fn register_all_dock_windows(mut registry: ResMut<jackdaw_panels::WindowRegistry
         id: "jackdaw.project_files".into(),
         name: "Project Files".into(),
         icon: None,
-        default_area: "left_bottom".into(),
-        priority: 0,
+        default_area: "left".into(),
+        priority: 10,
         build: std::sync::Arc::new(|world, parent| {
             world.spawn((
                 ChildOf(parent),
