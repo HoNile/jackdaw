@@ -32,6 +32,7 @@ jackdaw_remote.workspace = true
 jackdaw_node_graph.workspace = true
 jackdaw_animation.workspace = true
 jackdaw_avian_integration.workspace = true
+jackdaw_panels.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 avian3d.workspace = true

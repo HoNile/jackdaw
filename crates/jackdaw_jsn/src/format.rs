@@ -264,4 +264,8 @@ pub struct JsnProjectConfig {
     /// Default scene to open (relative to project root, e.g. "assets/scenes/level1.jsn").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_scene: Option<String>,
+    /// Persisted editor layout state (which windows in which areas, active tabs, area sizes).
+    /// Format is opaque to the JSN crate; consumers parse it as `jackdaw_panels::LayoutState`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<serde_json::Value>,
 }

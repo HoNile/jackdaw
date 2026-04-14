@@ -298,6 +298,39 @@ fn save_scene_inner(world: &mut World) {
 
     // Save catalog alongside scene if dirty
     crate::asset_catalog::save_catalog(world);
+
+    // Persist current editor layout to project.jsn
+    save_layout_to_project(world);
+}
+
+fn save_layout_to_project(world: &mut World) {
+    let Some(root) = world
+        .get_resource::<crate::project::ProjectRoot>()
+        .map(|p| p.root.clone())
+    else {
+        return;
+    };
+
+    let layout = jackdaw_panels::layout::capture_layout_state(world);
+    let layout_json = match serde_json::to_value(&layout) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("Failed to serialize layout: {e}");
+            return;
+        }
+    };
+
+    let mut project = world
+        .resource_mut::<crate::project::ProjectRoot>()
+        .config
+        .clone();
+    project.project.layout = Some(layout_json);
+
+    if let Err(e) = crate::project::save_project_config(&root, &project) {
+        warn!("Failed to save project config: {e}");
+    } else {
+        world.resource_mut::<crate::project::ProjectRoot>().config = project;
+    }
 }
 
 pub fn load_scene(world: &mut World) {

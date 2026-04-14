@@ -67,6 +67,15 @@ pub fn read_last_project() -> Option<PathBuf> {
     recent.projects.first().map(|e| e.path.clone())
 }
 
+pub fn save_project_config(root: &Path, project: &JsnProject) -> std::io::Result<()> {
+    let jsn_dir = root.join(".jsn");
+    std::fs::create_dir_all(&jsn_dir)?;
+    let path = jsn_dir.join("project.jsn");
+    let data = serde_json::to_string_pretty(project)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::write(&path, data)
+}
+
 pub fn load_project_config(root: &Path) -> Option<JsnProject> {
     // Prefer .jsn/ directory, fall back to legacy root location
     let new_path = root.join(".jsn/project.jsn");
@@ -92,6 +101,7 @@ pub fn create_default_project(root: &Path) -> JsnProject {
             name,
             description: String::new(),
             default_scene: None,
+            layout: None,
         },
     };
 

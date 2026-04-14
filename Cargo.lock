@@ -4336,6 +4336,7 @@ dependencies = [
  "jackdaw_geometry",
  "jackdaw_jsn",
  "jackdaw_node_graph",
+ "jackdaw_panels",
  "jackdaw_remote",
  "jackdaw_runtime",
  "jackdaw_terrain",
@@ -4431,6 +4432,8 @@ name = "jackdaw_panels"
 version = "0.3.1"
 dependencies = [
  "bevy",
+ "jackdaw_feathers",
+ "lucide-icons",
  "serde",
 ]
 

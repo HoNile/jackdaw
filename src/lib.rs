@@ -146,6 +146,8 @@ impl Plugin for EditorPlugin {
             .add_plugins(physics_tool::PhysicsToolPlugin)
             .add_plugins(jackdaw_node_graph::NodeGraphPlugin)
             .add_plugins(jackdaw_animation::AnimationPlugin)
+            .add_plugins(jackdaw_panels::DockPlugin)
+            .add_systems(Startup, (register_all_dock_windows, register_workspaces, sync_icon_font))
             .configure_sets(
                 Update,
                 EditorInteraction
@@ -155,13 +157,12 @@ impl Plugin for EditorPlugin {
             .insert_resource(UiTheme(create_dark_theme()))
             .init_resource::<layout::ActiveDocument>()
             .init_resource::<layout::SceneViewPreset>()
-            .init_resource::<layout::ActiveDockWindow>()
             .init_resource::<layout::KeybindHelpPopover>()
             .init_resource::<asset_catalog::AssetCatalog>()
             .init_resource::<jackdaw_jsn::SceneJsnAst>()
             .add_systems(
                 OnEnter(AppState::Editor),
-                (spawn_layout, populate_menu).chain(),
+                (spawn_layout, populate_menu, apply_saved_layout).chain(),
             )
             .add_systems(OnExit(AppState::Editor), cleanup_editor)
             .add_systems(
@@ -174,8 +175,6 @@ impl Plugin for EditorPlugin {
                     layout::update_edit_tool_highlights,
                     layout::update_active_document_display,
                     layout::update_tab_strip_highlights,
-                    layout::update_dock_body_visibility,
-                    layout::update_dock_sidebar_highlights,
                     auto_hide_internal_entities,
                     decorate_timeline_tooltips,
                     discover_gltf_clips,
@@ -187,6 +186,7 @@ impl Plugin for EditorPlugin {
                 )
                     .run_if(in_state(AppState::Editor)),
             )
+            .add_observer(on_workspace_changed)
             .add_observer(on_scroll)
             .add_observer(handle_menu_action)
             .add_observer(on_create_clip_for_selection)
@@ -197,7 +197,7 @@ impl Plugin for EditorPlugin {
             .add_observer(on_clip_name_commit)
             .add_observer(on_duration_input_commit)
             .add_observer(on_timeline_keyframe_click)
-            .add_observer(layout::on_dock_sidebar_icon_click);
+;
     }
 }
 
@@ -1019,8 +1019,12 @@ fn handle_timeline_shortcuts(world: &mut World) {
         )
     };
 
-    let timeline_active =
-        world.resource::<layout::ActiveDockWindow>().0 == layout::DockWindowKind::Timeline;
+    let timeline_active = {
+        let mut query = world.query::<&jackdaw_panels::ActiveDockWindow>();
+        query
+            .iter(world)
+            .any(|active| active.0.as_deref() == Some("jackdaw.timeline"))
+    };
     if timeline_active && !ctrl {
         handle_timeline_scrub_keys(world, shift);
     }
@@ -1617,6 +1621,25 @@ fn populate_menu(world: &mut World) {
                     ("add.prefab", "Prefab..."),
                 ],
             ),
+            (
+                "Window",
+                vec![
+                    ("window.hierarchy", "Scene Tree"),
+                    ("window.import", "Import"),
+                    ("window.project_files", "Project Files"),
+                    ("---", ""),
+                    ("window.assets", "Assets"),
+                    ("window.timeline", "Timeline"),
+                    ("window.terminal", "Terminal"),
+                    ("---", ""),
+                    ("window.components", "Components"),
+                    ("window.materials", "Materials"),
+                    ("window.resources", "Resources"),
+                    ("window.systems", "Systems"),
+                    ("---", ""),
+                    ("window.reset_layout", "Reset Layout"),
+                ],
+            ),
         ],
     );
 }
@@ -1881,6 +1904,27 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
                 crate::prefab_picker::open_prefab_picker(world);
             });
         }
+        action if action.starts_with("window.") => {
+            let window_id = match action {
+                "window.assets" => Some("jackdaw.assets"),
+                "window.timeline" => Some("jackdaw.timeline"),
+                "window.terminal" => Some("jackdaw.terminal"),
+                "window.reset_layout" => {
+                    info!("Reset layout — not yet implemented");
+                    None
+                }
+                _ => None,
+            };
+            if let Some(id) = window_id {
+                commands.queue(move |world: &mut World| {
+                    let mut areas =
+                        world.query::<&mut jackdaw_panels::ActiveDockWindow>();
+                    for mut active in areas.iter_mut(world) {
+                        active.0 = Some(id.to_string());
+                    }
+                });
+            }
+        }
         _ => {}
     }
 }
@@ -2119,4 +2163,332 @@ fn on_scroll(
     if *delta == Vec2::ZERO {
         scroll.propagate(false);
     }
+}
+
+fn register_workspaces(mut registry: ResMut<jackdaw_panels::WorkspaceRegistry>) {
+    use jackdaw_feathers::icons::Icon;
+
+    registry.register(jackdaw_panels::WorkspaceDescriptor {
+        id: "layout".into(),
+        name: "Main scene".into(),
+        icon: Some(String::from(Icon::File.unicode())),
+        accent_color: Color::srgba(0.35, 0.55, 1.0, 0.8),
+        layout: jackdaw_panels::LayoutState::default(),
+    });
+
+    registry.register(jackdaw_panels::WorkspaceDescriptor {
+        id: "debug".into(),
+        name: "Schedule Explorer".into(),
+        icon: Some(String::from(Icon::CalendarSearch.unicode())),
+        accent_color: Color::srgba(0.8, 0.55, 0.35, 0.8),
+        layout: jackdaw_panels::LayoutState::default(),
+    });
+}
+
+fn on_workspace_changed(
+    trigger: On<jackdaw_panels::WorkspaceChanged>,
+    mut active: ResMut<layout::ActiveDocument>,
+) {
+    let event = trigger.event();
+    match event.new.as_str() {
+        "layout" => active.kind = layout::TabKind::Scene,
+        "debug" => active.kind = layout::TabKind::ScheduleExplorer,
+        _ => {}
+    }
+}
+
+fn apply_saved_layout(mut commands: Commands) {
+    // Defer application — DockAreas need to be fully populated first, which
+    // happens via observers during the next Update cycle.
+    commands.queue(|world: &mut World| {
+        let Some(layout_json) = world
+            .get_resource::<crate::project::ProjectRoot>()
+            .and_then(|p| p.config.project.layout.clone())
+        else {
+            return;
+        };
+
+        let layout: jackdaw_panels::LayoutState = match serde_json::from_value(layout_json) {
+            Ok(l) => l,
+            Err(e) => {
+                warn!("Failed to deserialize saved layout: {e}");
+                return;
+            }
+        };
+
+        // Apply active window and panel ratio for each area with a saved state.
+        let mut area_query = world.query::<(Entity, &jackdaw_panels::DockArea)>();
+        let areas: Vec<(Entity, String)> = area_query
+            .iter(world)
+            .map(|(e, a)| (e, a.id.clone()))
+            .collect();
+
+        for (area_entity, area_id) in areas {
+            let Some(state) = layout.areas.get(&area_id) else {
+                continue;
+            };
+
+            if let Some(active) = &state.active {
+                if let Some(mut active_dock) = world
+                    .entity_mut(area_entity)
+                    .get_mut::<jackdaw_panels::ActiveDockWindow>()
+                {
+                    active_dock.0 = Some(active.clone());
+                }
+
+                // Toggle content display to match active
+                let mut content_query = world
+                    .query::<(Entity, &jackdaw_panels::DockTabContent, &ChildOf)>();
+                let to_update: Vec<(Entity, bool)> = content_query
+                    .iter(world)
+                    .filter(|(_, _, co)| co.parent() == area_entity)
+                    .map(|(e, c, _)| (e, &c.window_id == active))
+                    .collect();
+                for (entity, is_active) in to_update {
+                    if let Some(mut node) = world.entity_mut(entity).get_mut::<Node>() {
+                        node.display = if is_active { Display::Flex } else { Display::None };
+                    }
+                }
+            }
+
+            if state.size_ratio > 0.0 {
+                if let Some(mut panel) = world
+                    .entity_mut(area_entity)
+                    .get_mut::<jackdaw_panels::Panel>()
+                {
+                    panel.ratio = state.size_ratio;
+                }
+            }
+        }
+
+        info!("Applied saved layout from project.jsn");
+    });
+}
+
+fn sync_icon_font(
+    icon_font: Option<Res<jackdaw_feathers::icons::IconFont>>,
+    mut commands: Commands,
+) {
+    if let Some(font) = icon_font {
+        commands.insert_resource(jackdaw_panels::IconFontHandle(font.0.clone()));
+    }
+}
+
+fn register_all_dock_windows(mut registry: ResMut<jackdaw_panels::WindowRegistry>) {
+    use jackdaw_feathers::icons::Icon;
+
+    registry.register(jackdaw_panels::DockWindowDescriptor {
+        id: "jackdaw.assets".into(),
+        name: "Assets".into(),
+        icon: Some(String::from(Icon::FolderOpen.unicode())),
+        default_area: "bottom_dock".into(),
+        priority: 0,
+        build: std::sync::Arc::new(|world, parent| {
+            let icon_font = world
+                .get_resource::<jackdaw_feathers::icons::IconFont>()
+                .map(|f| f.0.clone())
+                .unwrap_or_default();
+            world.spawn((
+                ChildOf(parent),
+                asset_browser::asset_browser_panel(icon_font),
+            ));
+            world
+                .resource_mut::<asset_browser::AssetBrowserState>()
+                .needs_refresh = true;
+        }),
+    });
+
+    registry.register(jackdaw_panels::DockWindowDescriptor {
+        id: "jackdaw.timeline".into(),
+        name: "Timeline".into(),
+        icon: Some(String::from(Icon::Ruler.unicode())),
+        default_area: "bottom_dock".into(),
+        priority: 1,
+        build: std::sync::Arc::new(|world, parent| {
+            world.spawn((
+                ChildOf(parent),
+                jackdaw_animation::timeline_panel(),
+            ));
+        }),
+    });
+
+    registry.register(jackdaw_panels::DockWindowDescriptor {
+        id: "jackdaw.terminal".into(),
+        name: "Terminal".into(),
+        icon: Some(String::from(Icon::Terminal.unicode())),
+        default_area: "bottom_dock".into(),
+        priority: 2,
+        build: std::sync::Arc::new(|world, parent| {
+            world.spawn((
+                ChildOf(parent),
+                Node {
+                    flex_grow: 1.0,
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                children![(
+                    Text::new("Terminal window — not implemented yet"),
+                    TextFont {
+                        font_size: 11.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.3)),
+                )],
+            ));
+        }),
+    });
+
+    // ── Left top: Scene Tree ──
+
+    registry.register(jackdaw_panels::DockWindowDescriptor {
+        id: "jackdaw.hierarchy".into(),
+        name: "Scene Tree".into(),
+        icon: None,
+        default_area: "left_top".into(),
+        priority: 0,
+        build: std::sync::Arc::new(|world, parent| {
+            let icon_font = world
+                .get_resource::<jackdaw_feathers::icons::IconFont>()
+                .map(|f| f.0.clone())
+                .unwrap_or_default();
+            world.spawn((
+                ChildOf(parent),
+                crate::layout::hierarchy_content(icon_font),
+            ));
+        }),
+    });
+
+    registry.register(jackdaw_panels::DockWindowDescriptor {
+        id: "jackdaw.import".into(),
+        name: "Import".into(),
+        icon: None,
+        default_area: "left_top".into(),
+        priority: 1,
+        build: std::sync::Arc::new(|world, parent| {
+            world.spawn((
+                ChildOf(parent),
+                Node {
+                    flex_grow: 1.0,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                children![(
+                    Text::new("Import"),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.3)),
+                )],
+            ));
+        }),
+    });
+
+    // ── Left bottom: Project Files ──
+
+    registry.register(jackdaw_panels::DockWindowDescriptor {
+        id: "jackdaw.project_files".into(),
+        name: "Project Files".into(),
+        icon: None,
+        default_area: "left_bottom".into(),
+        priority: 0,
+        build: std::sync::Arc::new(|world, parent| {
+            world.spawn((
+                ChildOf(parent),
+                crate::layout::project_files_panel_content(),
+            ));
+            world
+                .resource_mut::<project_files::ProjectFilesState>()
+                .needs_refresh = true;
+        }),
+    });
+
+    // ── Right sidebar: Inspector tabs ──
+
+    registry.register(jackdaw_panels::DockWindowDescriptor {
+        id: "jackdaw.inspector.components".into(),
+        name: "Components".into(),
+        icon: None,
+        default_area: "right_sidebar".into(),
+        priority: 0,
+        build: std::sync::Arc::new(|world, parent| {
+            let icon_font = world
+                .get_resource::<jackdaw_feathers::icons::IconFont>()
+                .map(|f| f.0.clone())
+                .unwrap_or_default();
+            world.spawn((
+                ChildOf(parent),
+                crate::layout::inspector_components_content(icon_font),
+            ));
+        }),
+    });
+
+    registry.register(jackdaw_panels::DockWindowDescriptor {
+        id: "jackdaw.inspector.materials".into(),
+        name: "Materials".into(),
+        icon: None,
+        default_area: "right_sidebar".into(),
+        priority: 1,
+        build: std::sync::Arc::new(|world, parent| {
+            let icon_font = world
+                .get_resource::<jackdaw_feathers::icons::IconFont>()
+                .map(|f| f.0.clone())
+                .unwrap_or_default();
+            world.spawn((
+                ChildOf(parent),
+                material_browser::material_browser_panel(icon_font),
+            ));
+            world
+                .resource_mut::<material_browser::MaterialBrowserState>()
+                .needs_rescan = true;
+        }),
+    });
+
+    registry.register(jackdaw_panels::DockWindowDescriptor {
+        id: "jackdaw.inspector.resources".into(),
+        name: "Resources".into(),
+        icon: None,
+        default_area: "right_sidebar".into(),
+        priority: 2,
+        build: std::sync::Arc::new(|world, parent| {
+            world.spawn((
+                ChildOf(parent),
+                Node {
+                    flex_grow: 1.0,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                children![(
+                    Text::new("Resources"),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.3)),
+                )],
+            ));
+        }),
+    });
+
+    registry.register(jackdaw_panels::DockWindowDescriptor {
+        id: "jackdaw.inspector.systems".into(),
+        name: "Systems".into(),
+        icon: None,
+        default_area: "right_sidebar".into(),
+        priority: 3,
+        build: std::sync::Arc::new(|world, parent| {
+            world.spawn((
+                ChildOf(parent),
+                Node {
+                    flex_grow: 1.0,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                children![(
+                    Text::new("Systems"),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.3)),
+                )],
+            ));
+        }),
+    });
 }

@@ -99,34 +99,6 @@ pub struct DocumentRoot(pub TabKind);
 #[derive(Component)]
 pub struct SceneCenter;
 
-/// Which tool window is currently shown in the bottom dock panel.
-/// Each sidebar icon switches this resource; the
-/// [`update_dock_body_visibility`] system toggles `Display` on
-/// [`DockBody`] containers to match.
-#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum DockWindowKind {
-    Terminal,
-    #[default]
-    Assets,
-    Timeline,
-}
-
-/// Type-erased wrapper resource so we can mark the active dock
-/// window without scattering `Res<DockWindowKind>` everywhere.
-#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub struct ActiveDockWindow(pub DockWindowKind);
-
-/// Marker on a clickable sidebar icon. Carries the window kind the
-/// icon selects.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-pub struct DockSidebarIcon(pub DockWindowKind);
-
-/// Marker on one of the body containers in the dock panel. There's
-/// one per window kind; `update_dock_body_visibility` toggles their
-/// `Display` based on [`ActiveDockWindow`].
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-pub struct DockBody(pub DockWindowKind);
-
 /// Marker on the hierarchy filter text input
 #[derive(Component)]
 pub struct HierarchyFilter;
@@ -239,16 +211,16 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
                                 0.1,
                                 (
                                     // Left column: hierarchy + project files (~266px default, ratio 1)
-                                    Spawn((split_panel::panel(1), left_column(font.clone()))),
+                                    Spawn((split_panel::panel(1), left_column())),
                                     Spawn(split_panel::panel_handle()),
-                                    // Center column: Scene/Animation preset swap (ratio 4).
+                                    // Center column: viewport + bottom dock (ratio 4).
                                     Spawn((
                                         split_panel::panel(4),
                                         center_column(font.clone()),
                                     )),
                                     Spawn(split_panel::panel_handle()),
                                     // Right column: inspector (~310px default, ratio 1)
-                                    Spawn((split_panel::panel(1), entity_inspector(font.clone()))),
+                                    Spawn((split_panel::panel(1), right_dock_area())),
                                 ),
                             ),
                         )],
@@ -327,6 +299,7 @@ fn window_header() -> impl Bundle {
                 children![
                     menu_bar::menu_bar_shell(),
                     (
+                        jackdaw_panels::WorkspaceTabStrip,
                         DocumentTabStrip,
                         EditorEntity,
                         Node {
@@ -336,10 +309,6 @@ fn window_header() -> impl Bundle {
                             column_gap: px(4.0),
                             ..Default::default()
                         },
-                        children![
-                            document_tab(TabKind::Scene, true),
-                            document_tab(TabKind::ScheduleExplorer, false),
-                        ],
                     ),
                 ],
             ),
@@ -365,85 +334,6 @@ fn window_header() -> impl Bundle {
                 children![play_pause_controls(),],
             ),
         ],
-    )
-}
-
-/// A single document tab in the header strip. Carries a
-/// [`DocumentTabButton`] marker with its `TabKind`, and an inline click
-/// observer that flips [`ActiveDocument`] to that kind. Styling is
-/// refreshed every frame by [`update_tab_strip_highlights`].
-fn document_tab(kind: TabKind, active: bool) -> impl Bundle {
-    let bg = if active {
-        tokens::DOC_TAB_ACTIVE_BG
-    } else {
-        Color::NONE
-    };
-    let border = if active {
-        tokens::DOC_TAB_ACTIVE_BORDER
-    } else {
-        Color::NONE
-    };
-    let label_color = if active {
-        tokens::DOC_TAB_ACTIVE_LABEL
-    } else {
-        tokens::DOC_TAB_INACTIVE_LABEL
-    };
-    (
-        DocumentTabButton(kind),
-        Hovered::default(),
-        Node {
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            padding: UiRect::axes(px(7.0), px(4.0)),
-            column_gap: px(5.0),
-            border: UiRect::all(px(1.0)),
-            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_MD)),
-            ..Default::default()
-        },
-        BackgroundColor(bg),
-        BorderColor::all(border),
-        children![
-            // 2.5×12 accent stripe keyed off the TabKind.
-            (
-                Node {
-                    width: px(2.5),
-                    height: px(12.0),
-                    border_radius: BorderRadius::all(px(5.0)),
-                    ..Default::default()
-                },
-                BackgroundColor(kind.accent()),
-            ),
-            // 12×12 lucide icon.
-            (
-                Text::new(String::from(kind.icon().unicode())),
-                TextFont {
-                    font_size: 12.0,
-                    ..Default::default()
-                },
-                TextColor(label_color),
-            ),
-            // Label.
-            (
-                Text::new(kind.label().to_string()),
-                TextFont {
-                    font_size: tokens::FONT_MD,
-                    ..Default::default()
-                },
-                TextColor(label_color),
-            ),
-        ],
-        observe(
-            move |_: On<Pointer<Click>>,
-                  mut active: ResMut<ActiveDocument>,
-                  manager: Res<ConnectionManager>| {
-                // Keep the "Remote disconnected ⇒ can't open" guard from
-                // the old workspace tab, now gating the Schedule Explorer.
-                if kind == TabKind::ScheduleExplorer && !manager.is_connected() {
-                    return;
-                }
-                active.kind = kind;
-            },
-        ),
     )
 }
 
@@ -489,7 +379,7 @@ fn play_pause_controls() -> impl Bundle {
 }
 
 /// Left column: Scene Tree panel (top) + Project Files panel (bottom), resizable split
-fn left_column(icon_font: Handle<Font>) -> impl Bundle {
+fn left_column() -> impl Bundle {
     (
         EditorEntity,
         Node {
@@ -498,33 +388,66 @@ fn left_column(icon_font: Handle<Font>) -> impl Bundle {
             flex_direction: FlexDirection::Column,
             ..Default::default()
         },
-        // Vertical split: hierarchy (top, ratio 3) | project files (bottom, ratio 1)
         split_panel::panel_group(
             0.15,
             (
-                Spawn((split_panel::panel(3), entity_heiarchy(icon_font))),
+                Spawn((split_panel::panel(3), left_top_dock_area())),
                 Spawn(split_panel::panel_handle()),
-                Spawn((split_panel::panel(1), project_files_panel())),
+                Spawn((split_panel::panel(1), left_bottom_dock_area())),
             ),
         ),
     )
 }
 
+fn left_top_dock_area() -> impl Bundle {
+    (
+        jackdaw_panels::DockArea {
+            id: "left_top".into(),
+            style: jackdaw_panels::DockAreaStyle::TabBar,
+        },
+        EditorEntity,
+        Node {
+            width: percent(100),
+            height: percent(100),
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::clip(),
+            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
+            ..Default::default()
+        },
+        BackgroundColor(tokens::PANEL_BG),
+    )
+}
+
+fn left_bottom_dock_area() -> impl Bundle {
+    (
+        jackdaw_panels::DockArea {
+            id: "left_bottom".into(),
+            style: jackdaw_panels::DockAreaStyle::TabBar,
+        },
+        EditorEntity,
+        Node {
+            width: percent(100),
+            height: percent(100),
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::clip(),
+            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
+            ..Default::default()
+        },
+        BackgroundColor(tokens::PANEL_BG),
+    )
+}
+
 /// Project Files panel. File tree browser.
-fn project_files_panel() -> impl Bundle {
+pub fn project_files_panel_content() -> impl Bundle {
     (
         EditorEntity,
         Node {
             flex_direction: FlexDirection::Column,
             width: percent(100),
             height: percent(100),
-            overflow: Overflow::clip(),
-            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
             ..Default::default()
         },
-        BackgroundColor(tokens::PANEL_BG),
         children![
-            panel_header::panel_tab_bar(&[panel_header::TabDef::new("Project Files", true)], true,),
             // Search input
             (
                 Node {
@@ -580,7 +503,7 @@ fn center_column(icon_font: Handle<Font>) -> impl Bundle {
                     viewport_with_toolbar(icon_font.clone()),
                 )),
                 Spawn(split_panel::panel_handle()),
-                Spawn((split_panel::panel(1), bottom_panels(icon_font))),
+                Spawn((split_panel::panel(1), bottom_dock_area())),
             ),
         ),
     )
@@ -1157,192 +1080,144 @@ fn spawn_keybind_help_content(
     }
 }
 
-fn entity_heiarchy(icon_font: Handle<Font>) -> impl Bundle {
+pub fn hierarchy_content(icon_font: Handle<Font>) -> impl Bundle {
     let add_entity_icon_font = icon_font.clone();
     (
         HierarchyPanel,
         Node {
-            height: percent(100),
             flex_direction: FlexDirection::Column,
-            overflow: Overflow::clip(),
-            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
+            flex_grow: 1.0,
+            min_height: px(0.0),
+            padding: UiRect::all(px(tokens::SPACING_SM)),
             ..Default::default()
         },
-        BackgroundColor(tokens::PANEL_BG),
         children![
-            panel_header::panel_tab_bar(
-                &[
-                    panel_header::TabDef::new("Scene Tree", true),
-                    panel_header::TabDef::new("Import", false),
-                ],
-                true,
-            ),
-            // Tab 0: Scene Tree content
             (
-                panel_header::PanelTabContent(0),
                 Node {
-                    flex_direction: FlexDirection::Column,
-                    flex_grow: 1.0,
-                    min_height: px(0.0),
-                    padding: UiRect::all(px(tokens::SPACING_SM)),
-                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: px(tokens::SPACING_XS),
+                    width: percent(100),
                     ..Default::default()
                 },
                 children![
-                    // Filter row: text input + show-all toggle button
                     (
                         Node {
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::Center,
-                            column_gap: px(tokens::SPACING_XS),
-                            width: percent(100),
+                            flex_grow: 1.0,
                             ..Default::default()
                         },
-                        children![
-                            (
-                                Node {
-                                    flex_grow: 1.0,
-                                    ..Default::default()
-                                },
-                                children![(
-                                    HierarchyFilter,
-                                    text_edit::text_edit(
-                                        TextEditProps::default()
-                                            .with_placeholder("Filter...")
-                                            .allow_empty()
-                                    ),
-                                )],
+                        children![(
+                            HierarchyFilter,
+                            text_edit::text_edit(
+                                TextEditProps::default()
+                                    .with_placeholder("Filter...")
+                                    .allow_empty()
                             ),
-                            // Show all / named only toggle
-                            (
-                                HierarchyShowAllButton,
-                                Interaction::default(),
-                                Node {
-                                    width: px(24.0),
-                                    height: px(24.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_SM),),
-                                    ..Default::default()
-                                },
-                                children![(
-                                    Text::new(String::from(Icon::Eye.unicode())),
-                                    TextFont {
-                                        font: icon_font,
-                                        font_size: 14.0,
-                                        ..Default::default()
-                                    },
-                                    TextColor(tokens::TEXT_SECONDARY),
-                                )],
-                            ),
-                        ],
+                        )],
                     ),
-                    // Add Entity button (matching Figma reference)
                     (
+                        HierarchyShowAllButton,
                         Interaction::default(),
-                        Hovered::default(),
                         Node {
-                            flex_direction: FlexDirection::Row,
+                            width: px(24.0),
+                            height: px(24.0),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
-                            width: percent(100),
-                            height: px(tokens::ROW_HEIGHT),
-                            column_gap: px(tokens::SPACING_SM),
-                            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_MD)),
-                            margin: UiRect::vertical(px(tokens::SPACING_XS)),
-                            flex_shrink: 0.0,
+                            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_SM)),
                             ..Default::default()
                         },
-                        BackgroundColor(tokens::ELEVATED_BG),
-                        observe(
-                            |hover: On<Pointer<Over>>, mut bg: Query<&mut BackgroundColor>| {
-                                if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
-                                    bg.0 = tokens::TOOLBAR_ACTIVE_BG;
-                                }
+                        children![(
+                            Text::new(String::from(Icon::Eye.unicode())),
+                            TextFont {
+                                font: icon_font,
+                                font_size: 14.0,
+                                ..Default::default()
                             },
-                        ),
-                        observe(
-                            |out: On<Pointer<Out>>, mut bg: Query<&mut BackgroundColor>| {
-                                if let Ok(mut bg) = bg.get_mut(out.event_target()) {
-                                    bg.0 = tokens::ELEVATED_BG;
-                                }
-                            },
-                        ),
-                        children![
-                            (
-                                Text::new(String::from(Icon::PackagePlus.unicode())),
-                                TextFont {
-                                    font: add_entity_icon_font,
-                                    font_size: tokens::ICON_SM,
-                                    ..Default::default()
-                                },
-                                TextColor(tokens::TEXT_PRIMARY),
-                            ),
-                            (
-                                Text::new("Add Entity"),
-                                TextFont {
-                                    font_size: tokens::TEXT_SIZE,
-                                    weight: FontWeight::MEDIUM,
-                                    ..Default::default()
-                                },
-                                TextColor(tokens::TEXT_PRIMARY),
-                            ),
-                        ],
+                            TextColor(tokens::TEXT_SECONDARY),
+                        )],
                     ),
-                    (
-                        HierarchyTreeContainer,
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            width: percent(100),
-                            flex_grow: 1.0,
-                            min_height: px(0.0),
-                            overflow: Overflow::scroll_y(),
-                            margin: UiRect::top(px(tokens::SPACING_SM)),
-                            ..Default::default()
-                        },
-                        BackgroundColor(Color::NONE),
-                        tree_container_drop_observers(),
-                    ),
-                    // Scene stats footer (center-justified)
-                    (
-                        crate::status_bar::SceneStatsText,
-                        Text::new(""),
-                        TextFont {
-                            font_size: tokens::FONT_SM,
-                            ..Default::default()
-                        },
-                        TextColor(tokens::TEXT_SECONDARY),
-                        TextLayout::new_with_justify(Justify::Center),
-                        Node {
-                            padding: UiRect::all(px(tokens::SPACING_XS)),
-                            flex_shrink: 0.0,
-                            width: percent(100),
-                            ..Default::default()
-                        },
-                    )
                 ],
             ),
-            // Tab 1: Import placeholder
             (
-                panel_header::PanelTabContent(1),
+                Interaction::default(),
+                Hovered::default(),
                 Node {
-                    flex_direction: FlexDirection::Column,
-                    flex_grow: 1.0,
-                    min_height: px(0.0),
-                    padding: UiRect::all(px(tokens::SPACING_MD)),
+                    flex_direction: FlexDirection::Row,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    display: Display::None,
+                    width: percent(100),
+                    height: px(tokens::ROW_HEIGHT),
+                    column_gap: px(tokens::SPACING_SM),
+                    border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_MD)),
+                    margin: UiRect::vertical(px(tokens::SPACING_XS)),
+                    flex_shrink: 0.0,
                     ..Default::default()
                 },
-                children![(
-                    Text::new("Import"),
-                    TextFont {
-                        font_size: tokens::FONT_MD,
-                        ..Default::default()
+                BackgroundColor(tokens::ELEVATED_BG),
+                observe(
+                    |hover: On<Pointer<Over>>, mut bg: Query<&mut BackgroundColor>| {
+                        if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
+                            bg.0 = tokens::TOOLBAR_ACTIVE_BG;
+                        }
                     },
-                    TextColor(tokens::TEXT_SECONDARY),
-                )],
+                ),
+                observe(
+                    |out: On<Pointer<Out>>, mut bg: Query<&mut BackgroundColor>| {
+                        if let Ok(mut bg) = bg.get_mut(out.event_target()) {
+                            bg.0 = tokens::ELEVATED_BG;
+                        }
+                    },
+                ),
+                children![
+                    (
+                        Text::new(String::from(Icon::PackagePlus.unicode())),
+                        TextFont {
+                            font: add_entity_icon_font,
+                            font_size: tokens::ICON_SM,
+                            ..Default::default()
+                        },
+                        TextColor(tokens::TEXT_PRIMARY),
+                    ),
+                    (
+                        Text::new("Add Entity"),
+                        TextFont {
+                            font_size: tokens::TEXT_SIZE,
+                            weight: FontWeight::MEDIUM,
+                            ..Default::default()
+                        },
+                        TextColor(tokens::TEXT_PRIMARY),
+                    ),
+                ],
+            ),
+            (
+                HierarchyTreeContainer,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    width: percent(100),
+                    flex_grow: 1.0,
+                    min_height: px(0.0),
+                    overflow: Overflow::scroll_y(),
+                    margin: UiRect::top(px(tokens::SPACING_SM)),
+                    ..Default::default()
+                },
+                BackgroundColor(Color::NONE),
+                tree_container_drop_observers(),
+            ),
+            (
+                crate::status_bar::SceneStatsText,
+                Text::new(""),
+                TextFont {
+                    font_size: tokens::FONT_SM,
+                    ..Default::default()
+                },
+                TextColor(tokens::TEXT_SECONDARY),
+                TextLayout::new_with_justify(Justify::Center),
+                Node {
+                    padding: UiRect::all(px(tokens::SPACING_XS)),
+                    flex_shrink: 0.0,
+                    width: percent(100),
+                    ..Default::default()
+                },
             )
         ],
     )
@@ -1488,73 +1363,6 @@ pub fn update_active_document_display(
     }
 }
 
-/// Click observer on dock sidebar icons — sets
-/// [`ActiveDockWindow`] to whatever kind the clicked icon
-/// represents. Runs as a global observer via `add_observer`; the
-/// `Interaction` component on each icon generates the
-/// `Pointer<Click>` events.
-pub fn on_dock_sidebar_icon_click(
-    trigger: On<Pointer<Click>>,
-    icons: Query<&DockSidebarIcon>,
-    mut active: ResMut<ActiveDockWindow>,
-) {
-    let Ok(icon) = icons.get(trigger.event_target()) else {
-        return;
-    };
-    if active.0 != icon.0 {
-        active.0 = icon.0;
-    }
-}
-
-/// Toggle `Display` on every [`DockBody`] so only the one matching
-/// [`ActiveDockWindow`] is visible. Runs every frame, cheap, and the
-/// branch early-exits when the resource hasn't changed.
-pub fn update_dock_body_visibility(
-    active: Res<ActiveDockWindow>,
-    mut bodies: Query<(&DockBody, &mut Node)>,
-) {
-    if !active.is_changed() {
-        return;
-    }
-    for (body, mut node) in &mut bodies {
-        node.display = if body.0 == active.0 {
-            Display::Flex
-        } else {
-            Display::None
-        };
-    }
-}
-
-/// Restyle dock sidebar icons so the active one gets an accent blue
-/// left border and primary text color, matching the legacy look of
-/// the asset-browser sidebar.
-pub fn update_dock_sidebar_highlights(
-    active: Res<ActiveDockWindow>,
-    mut icons: Query<(&DockSidebarIcon, &mut BorderColor, &Children)>,
-    mut text_colors: Query<&mut TextColor>,
-) {
-    if !active.is_changed() {
-        return;
-    }
-    for (icon, mut border, children) in &mut icons {
-        let is_active = icon.0 == active.0;
-        *border = BorderColor::all(if is_active {
-            tokens::ACCENT_BLUE
-        } else {
-            Color::NONE
-        });
-        for child in children.iter() {
-            if let Ok(mut tc) = text_colors.get_mut(child) {
-                tc.0 = if is_active {
-                    tokens::TEXT_PRIMARY
-                } else {
-                    tokens::TAB_INACTIVE_TEXT
-                };
-            }
-        }
-    }
-}
-
 /// Refresh tab-strip styling — active tab gets its bg + border, inactive
 /// tabs go transparent; Schedule Explorer dims when Remote is
 /// disconnected.
@@ -1607,17 +1415,12 @@ pub fn update_tab_strip_highlights(
     }
 }
 
-/// The bottom panel area below the viewport. Split into a 30px
-/// left window-selector sidebar + a body area that hosts whichever
-/// window is currently active (Assets, Timeline, ...).
-///
-/// This is the embryo of a docking system: in the near-term the
-/// sidebar icons swap the single body between a few tool windows.
-/// Later, top-of-panel tabs will let you open multiple instances of
-/// the same window kind (two asset browsers at different paths,
-/// multiple timelines for different clips, etc.).
-fn bottom_panels(icon_font: Handle<Font>) -> impl Bundle {
+fn bottom_dock_area() -> impl Bundle {
     (
+        jackdaw_panels::DockArea {
+            id: "bottom_dock".into(),
+            style: jackdaw_panels::DockAreaStyle::IconSidebar,
+        },
         EditorEntity,
         Node {
             width: percent(100),
@@ -1627,168 +1430,6 @@ fn bottom_panels(icon_font: Handle<Font>) -> impl Bundle {
             ..Default::default()
         },
         BackgroundColor(tokens::PANEL_BG),
-        children![
-            dock_window_sidebar(icon_font.clone()),
-            dock_body_area(icon_font),
-        ],
-    )
-}
-
-/// 30px vertical sidebar with one clickable icon per dock window
-/// kind. Matches the legacy sidebar that used to live inside the
-/// asset browser — same visual styling (borders, colors, active-state
-/// blue left accent) but now acts as a real window picker.
-fn dock_window_sidebar(icon_font: Handle<Font>) -> impl Bundle {
-    (
-        EditorEntity,
-        Node {
-            flex_direction: FlexDirection::Column,
-            justify_content: JustifyContent::SpaceBetween,
-            align_items: AlignItems::Center,
-            width: Val::Px(30.0),
-            padding: UiRect::new(Val::Px(1.0), Val::ZERO, Val::Px(4.0), Val::Px(9.0)),
-            flex_shrink: 0.0,
-            border: UiRect {
-                left: Val::Px(1.0),
-                top: Val::Px(1.0),
-                bottom: Val::Px(1.0),
-                right: Val::ZERO,
-            },
-            border_radius: BorderRadius::left(Val::Px(5.0)),
-            ..Default::default()
-        },
-        BackgroundColor(tokens::WINDOW_BG),
-        BorderColor::all(tokens::PANEL_BORDER),
-        children![
-            // Top group: the window pickers themselves.
-            (
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    ..Default::default()
-                },
-                children![
-                    dock_sidebar_icon(DockWindowKind::Terminal, Icon::Terminal, icon_font.clone()),
-                    dock_sidebar_icon(DockWindowKind::Assets, Icon::FolderOpen, icon_font.clone()),
-                    dock_sidebar_icon(DockWindowKind::Timeline, Icon::Ruler, icon_font.clone()),
-                ],
-            ),
-            // Bottom grip handle (decorative, will become a drag
-            // affordance when the docking system lands).
-            (
-                Node {
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    ..Default::default()
-                },
-                children![(
-                    Text::new(String::from(Icon::GripVertical.unicode())),
-                    TextFont {
-                        font: icon_font,
-                        font_size: 15.0,
-                        ..Default::default()
-                    },
-                    TextColor(tokens::TAB_INACTIVE_TEXT),
-                )],
-            ),
-        ],
-    )
-}
-
-/// A single clickable icon button in the dock sidebar. The button
-/// carries a `DockSidebarIcon` marker that identifies which window
-/// kind it selects; clicking it sets [`ActiveDockWindow`], which is
-/// consumed by [`update_dock_body_visibility`] and
-/// [`update_dock_sidebar_highlights`] to swap the body and restyle
-/// the sidebar respectively.
-fn dock_sidebar_icon(kind: DockWindowKind, icon: Icon, icon_font: Handle<Font>) -> impl Bundle {
-    (
-        DockSidebarIcon(kind),
-        Interaction::default(),
-        Node {
-            width: Val::Px(29.0),
-            height: Val::Px(30.0),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border: UiRect::left(Val::Px(2.0)),
-            ..Default::default()
-        },
-        BorderColor::all(Color::NONE),
-        children![(
-            Text::new(String::from(icon.unicode())),
-            TextFont {
-                font: icon_font,
-                font_size: tokens::ICON_MD,
-                ..Default::default()
-            },
-            TextColor(tokens::TAB_INACTIVE_TEXT),
-        )],
-    )
-}
-
-/// Container for the dock body — one sibling per window kind, with
-/// `update_dock_body_visibility` toggling `Display` so only the
-/// active one is visible. All bodies are spawned up-front so their
-/// internal state (asset browser path, timeline cursor, etc.)
-/// persists across switches.
-fn dock_body_area(icon_font: Handle<Font>) -> impl Bundle {
-    (
-        EditorEntity,
-        Node {
-            flex_grow: 1.0,
-            flex_direction: FlexDirection::Column,
-            min_width: Val::Px(0.0),
-            min_height: Val::Px(0.0),
-            ..Default::default()
-        },
-        children![
-            // Assets body — active by default.
-            (
-                DockBody(DockWindowKind::Assets),
-                Node {
-                    flex_grow: 1.0,
-                    width: percent(100),
-                    min_height: Val::Px(0.0),
-                    display: Display::Flex,
-                    ..Default::default()
-                },
-                children![asset_browser::asset_browser_panel(icon_font.clone())],
-            ),
-            // Timeline body.
-            (
-                DockBody(DockWindowKind::Timeline),
-                Node {
-                    flex_grow: 1.0,
-                    width: percent(100),
-                    min_height: Val::Px(0.0),
-                    display: Display::None,
-                    ..Default::default()
-                },
-                children![jackdaw_animation::timeline_panel()],
-            ),
-            // Terminal body — placeholder for now. Kept as a dead
-            // container so the sidebar icon has something to switch
-            // to without crashing.
-            (
-                DockBody(DockWindowKind::Terminal),
-                Node {
-                    flex_grow: 1.0,
-                    width: percent(100),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    display: Display::None,
-                    ..Default::default()
-                },
-                children![(
-                    Text::new("Terminal window — not implemented yet"),
-                    TextFont {
-                        font_size: tokens::FONT_MD,
-                        ..Default::default()
-                    },
-                    TextColor(tokens::TEXT_MUTED_COLOR.into()),
-                )],
-            ),
-        ],
     )
 }
 
@@ -1853,7 +1494,132 @@ fn editor_status_bar() -> impl Bundle {
     )
 }
 
-fn entity_inspector(icon_font: Handle<Font>) -> impl Bundle {
+fn right_dock_area() -> impl Bundle {
+    (
+        jackdaw_panels::DockArea {
+            id: "right_sidebar".into(),
+            style: jackdaw_panels::DockAreaStyle::TabBar,
+        },
+        EditorEntity,
+        Node {
+            height: percent(100),
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::clip(),
+            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
+            ..Default::default()
+        },
+        BackgroundColor(tokens::PANEL_BG),
+    )
+}
+
+pub fn inspector_components_content(icon_font: Handle<Font>) -> impl Bundle {
+    (
+        Node {
+            flex_direction: FlexDirection::Column,
+            flex_grow: 1.0,
+            min_height: px(0.0),
+            ..Default::default()
+        },
+        children![
+            (
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    width: percent(100),
+                    padding: UiRect::all(px(tokens::SPACING_SM)),
+                    row_gap: px(tokens::SPACING_XS),
+                    flex_shrink: 0.0,
+                    ..Default::default()
+                },
+                children![
+                    (
+                        crate::inspector::InspectorSearch,
+                        text_edit::text_edit(
+                            TextEditProps::default()
+                                .with_placeholder("Filter...")
+                                .allow_empty()
+                        ),
+                    ),
+                    (
+                        crate::inspector::AddComponentButton,
+                        Interaction::default(),
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            width: percent(100),
+                            height: px(tokens::ROW_HEIGHT),
+                            column_gap: px(tokens::SPACING_SM),
+                            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_MD)),
+                            flex_shrink: 0.0,
+                            ..Default::default()
+                        },
+                        BackgroundColor(tokens::ELEVATED_BG),
+                        observe(
+                            |hover: On<Pointer<Over>>,
+                             mut bg: Query<&mut BackgroundColor>| {
+                                if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
+                                    bg.0 = tokens::TOOLBAR_ACTIVE_BG;
+                                }
+                            },
+                        ),
+                        observe(
+                            |out: On<Pointer<Out>>,
+                             mut bg: Query<&mut BackgroundColor>| {
+                                if let Ok(mut bg) = bg.get_mut(out.event_target()) {
+                                    bg.0 = tokens::ELEVATED_BG;
+                                }
+                            },
+                        ),
+                        children![
+                            (
+                                Text::new(String::from(Icon::PackagePlus.unicode())),
+                                TextFont {
+                                    font: icon_font,
+                                    font_size: tokens::ICON_SM,
+                                    ..Default::default()
+                                },
+                                TextColor(tokens::TEXT_PRIMARY),
+                            ),
+                            (
+                                Text::new("Add Component"),
+                                TextFont {
+                                    font_size: tokens::TEXT_SIZE,
+                                    weight: FontWeight::MEDIUM,
+                                    ..Default::default()
+                                },
+                                TextColor(tokens::TEXT_PRIMARY),
+                            ),
+                        ],
+                        observe(
+                            |click: On<Pointer<Click>>, mut commands: Commands| {
+                                commands.trigger(
+                                    jackdaw_feathers::button::ButtonClickEvent {
+                                        entity: click.event_target(),
+                                    },
+                                );
+                            },
+                        ),
+                    ),
+                ],
+            ),
+            (
+                Inspector,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(tokens::SPACING_SM),
+                    overflow: Overflow::scroll_y(),
+                    flex_grow: 1.0,
+                    min_height: px(0.0),
+                    padding: UiRect::all(px(tokens::SPACING_SM)),
+                    ..Default::default()
+                }
+            ),
+        ],
+    )
+}
+
+#[allow(dead_code)]
+fn entity_inspector_old(icon_font: Handle<Font>) -> impl Bundle {
     (
         Node {
             height: percent(100),

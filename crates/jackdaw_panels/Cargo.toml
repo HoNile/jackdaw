@@ -1,0 +1,16 @@
+[package]
+name = "jackdaw_panels"
+version = "0.3.1"
+edition = "2024"
+description = "Generic docking and panel management system for Bevy editors"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jbuehler23/jackdaw"
+
+[dependencies]
+bevy.workspace = true
+serde.workspace = true
+jackdaw_feathers.workspace = true
+lucide-icons.workspace = true
+
+[lints]
+workspace = true
