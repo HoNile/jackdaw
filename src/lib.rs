@@ -2277,8 +2277,7 @@ fn init_layout(world: &mut World) {
         {
             if !persist.workspaces.is_empty() {
                 let active_tree = {
-                    let mut registry =
-                        world.resource_mut::<jackdaw_panels::WorkspaceRegistry>();
+                    let mut registry = world.resource_mut::<jackdaw_panels::WorkspaceRegistry>();
                     persist.apply_to_registry(&mut registry);
                     registry.active_workspace().map(|w| w.tree.clone())
                 };
