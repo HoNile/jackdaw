@@ -174,8 +174,7 @@ fn apply_last_material(entity: Entity) -> impl FnOnce(&mut World) {
 pub fn create_entity_in_world(world: &mut World, template: EntityTemplate) {
     let label = format!("Add {}", template.label());
     let spawn_fn = Box::new(move |world: &mut World| -> Entity {
-        let mut system_state: SystemState<(Commands, ResMut<Selection>)> =
-            SystemState::new(world);
+        let mut system_state: SystemState<(Commands, ResMut<Selection>)> = SystemState::new(world);
         let (mut commands, mut selection) = system_state.get_mut(world);
         let entity = create_entity(&mut commands, template, &mut selection);
         system_state.apply(world);

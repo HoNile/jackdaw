@@ -34,6 +34,7 @@ jackdaw_animation.workspace = true
 jackdaw_avian_integration.workspace = true
 jackdaw_panels.workspace = true
 jackdaw_api.workspace = true
+bevy_enhanced_input.workspace = true
 sample_extension = { path = "examples/sample_extension" }
 serde.workspace = true
 serde_json.workspace = true
@@ -77,6 +78,7 @@ jackdaw_avian_integration = { version = "0.3.1", path = "crates/jackdaw_avian_in
 jackdaw_runtime = { version = "0.3.1", path = "crates/jackdaw_runtime" }
 jackdaw_panels = { version = "0.3.1", path = "crates/jackdaw_panels" }
 jackdaw_api = { version = "0.3.1", path = "crates/jackdaw_api" }
+bevy_enhanced_input = "0.24"
 rfd = "0.15"
 bevy_rerecast = { version = "0.4", default-features = true }
 ehttp = { version = "0.5", default-features = false, features = ["native-async", "json"] }

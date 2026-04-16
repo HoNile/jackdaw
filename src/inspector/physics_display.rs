@@ -527,9 +527,7 @@ pub(super) fn on_physics_enable_toggle(
             let cmd = DisablePhysics::from_world(world, source_entity);
             let mut cmd: Box<dyn EditorCommand> = Box::new(cmd);
             cmd.execute(world);
-            world
-                .resource_mut::<CommandHistory>()
-                .push_executed(cmd);
+            world.resource_mut::<CommandHistory>().push_executed(cmd);
         }
         // Rebuild inspector
         if let Ok(mut ec) = world.get_entity_mut(source_entity) {
@@ -553,7 +551,10 @@ impl DisablePhysics {
     fn from_world(world: &World, entity: Entity) -> Self {
         let mut removed_components = std::collections::HashMap::new();
         let mut removed_derived = std::collections::HashSet::new();
-        if let Some(node) = world.resource::<jackdaw_jsn::SceneJsnAst>().node_for_entity(entity) {
+        if let Some(node) = world
+            .resource::<jackdaw_jsn::SceneJsnAst>()
+            .node_for_entity(entity)
+        {
             for (type_path, value) in &node.components {
                 if type_path == RIGID_BODY_TYPE_PATH
                     || type_path == AVIAN_COLLIDER_TYPE_PATH
@@ -607,7 +608,9 @@ impl EditorCommand for DisablePhysics {
             let Some(registration) = reg.get_with_type_path(type_path) else {
                 continue;
             };
-            let Some(reflect_component) = registration.data::<bevy::ecs::reflect::ReflectComponent>() else {
+            let Some(reflect_component) =
+                registration.data::<bevy::ecs::reflect::ReflectComponent>()
+            else {
                 continue;
             };
             // Deserialize JSON -> reflected value -> insert into ECS
@@ -709,4 +712,3 @@ fn enable_physics(world: &mut World, entity: Entity) {
     let mut history = world.resource_mut::<CommandHistory>();
     history.push_executed(cmd);
 }
-

@@ -149,6 +149,14 @@ impl EditorCommand for ReparentEntity {
 }
 
 fn set_parent(world: &mut World, entity: Entity, parent: Option<Entity>) {
+    // Preserve world position across reparent. Compute the entity's current
+    // world transform, then update its local Transform so that:
+    //   new_parent_global * new_local = current_world
+    // This prevents the brush from "jumping" (or disappearing off-screen)
+    // when parented under an entity at a non-origin position.
+    let current_world = world.get::<GlobalTransform>(entity).copied();
+    let new_parent_world = parent.and_then(|p| world.get::<GlobalTransform>(p).copied());
+
     match parent {
         Some(p) => {
             world.entity_mut(entity).insert(ChildOf(p));
@@ -157,11 +165,41 @@ fn set_parent(world: &mut World, entity: Entity, parent: Option<Entity>) {
             world.entity_mut(entity).remove::<ChildOf>();
         }
     }
-    // Update AST parent
-    let mut ast = world.resource_mut::<jackdaw_jsn::SceneJsnAst>();
-    let parent_idx = parent.and_then(|p| ast.ecs_to_jsn.get(&p).copied());
-    if let Some(node) = ast.node_for_entity_mut(entity) {
-        node.parent = parent_idx;
+
+    let new_transform =
+        if let (Some(world_tf), Some(parent_world)) = (current_world, new_parent_world) {
+            Some(Transform::from_matrix(
+                (parent_world.affine().inverse() * world_tf.affine()).into(),
+            ))
+        } else if parent.is_none() {
+            current_world.map(|w| Transform::from_matrix(w.affine().into()))
+        } else {
+            None
+        };
+    if let Some(new_tf) = new_transform {
+        if let Some(mut tf) = world.get_mut::<Transform>(entity) {
+            *tf = new_tf;
+        }
+    }
+
+    // Update AST parent and (if changed) Transform
+    let parent_idx = {
+        let ast = world.resource::<jackdaw_jsn::SceneJsnAst>();
+        parent.and_then(|p| ast.ecs_to_jsn.get(&p).copied())
+    };
+    {
+        let mut ast = world.resource_mut::<jackdaw_jsn::SceneJsnAst>();
+        if let Some(node) = ast.node_for_entity_mut(entity) {
+            node.parent = parent_idx;
+        }
+    }
+    if let Some(new_tf) = new_transform {
+        sync_component_to_ast(
+            world,
+            entity,
+            "bevy_transform::components::transform::Transform",
+            &new_tf,
+        );
     }
 }
 

@@ -16,6 +16,7 @@ pub mod keybind_settings;
 pub mod keybinds;
 pub use inspector::{EditorMeta, ReflectEditorMeta};
 pub mod extension_loader;
+pub mod extensions_config;
 pub mod layout;
 pub mod material_browser;
 pub mod material_preview;
@@ -23,6 +24,7 @@ pub mod modal_transform;
 pub mod navmesh;
 pub mod physics_brush_bridge;
 pub mod physics_tool;
+pub mod plugins_dialog;
 pub mod prefab_picker;
 pub mod project;
 pub mod project_files;
@@ -149,6 +151,7 @@ impl Plugin for EditorPlugin {
             .add_plugins(jackdaw_animation::AnimationPlugin)
             .add_plugins(jackdaw_panels::DockPlugin)
             .add_plugins(extension_loader::ExtensionLoaderPlugin)
+            .add_plugins(plugins_dialog::PluginsDialogPlugin)
             .add_systems(
                 Startup,
                 (
@@ -169,9 +172,16 @@ impl Plugin for EditorPlugin {
             .init_resource::<layout::KeybindHelpPopover>()
             .init_resource::<asset_catalog::AssetCatalog>()
             .init_resource::<jackdaw_jsn::SceneJsnAst>()
+            .init_resource::<MenuBarDirty>()
+            .add_observer(flag_menu_dirty_on_window_add)
+            .add_observer(flag_menu_dirty_on_window_remove)
             .add_systems(
                 OnEnter(AppState::Editor),
                 (spawn_layout, init_layout, populate_menu).chain(),
+            )
+            .add_systems(
+                Update,
+                rebuild_menu_if_dirty.run_if(in_state(AppState::Editor)),
             )
             .add_systems(OnExit(AppState::Editor), cleanup_editor)
             .add_systems(
@@ -208,7 +218,73 @@ impl Plugin for EditorPlugin {
             .add_observer(on_duration_input_commit)
             .add_observer(on_timeline_keyframe_click);
 
-        jackdaw_api::load_static_extension(app, &sample_extension::SampleExtension);
+        // Register all built-in + example extensions into the catalog.
+        // `register_extension` runs each extension's one-time BEI context
+        // registration; this has to happen during build() so BEI's
+        // `finish()` sees all context types and initializes their
+        // `ContextInstances` resource.
+        jackdaw_api::register_extension(app, "sample", || {
+            Box::new(sample_extension::SampleExtension)
+        });
+
+        // Enable extensions. Has to run AFTER all plugins finish() — BEI
+        // initializes `ContextInstances<PreUpdate>` in finish(), and
+        // spawning a context entity before that triggers a panic. We
+        // queue the work as a Startup system that runs once before the
+        // editor enters its main loop.
+        app.add_systems(Startup, apply_enabled_extensions_startup);
+    }
+}
+
+/// Set when an extension's windows change. A system in Update drains it
+/// and rebuilds the menu bar once per frame so multiple registrations
+/// coalesce into a single rebuild.
+#[derive(Resource, Default)]
+pub struct MenuBarDirty(pub bool);
+
+/// Watches `RegisteredWindow` add/remove in observers (see
+/// `flag_menu_dirty_on_window_change`). When set, rebuilds the menu bar
+/// from the current `WindowRegistry`.
+fn rebuild_menu_if_dirty(world: &mut World) {
+    if !world.resource::<MenuBarDirty>().0 {
+        return;
+    }
+    world.resource_mut::<MenuBarDirty>().0 = false;
+    populate_menu(world);
+}
+
+fn flag_menu_dirty_on_window_add(
+    _: On<Add, jackdaw_api::RegisteredWindow>,
+    mut dirty: ResMut<MenuBarDirty>,
+) {
+    dirty.0 = true;
+}
+
+fn flag_menu_dirty_on_window_remove(
+    _: On<Remove, jackdaw_api::RegisteredWindow>,
+    mut dirty: ResMut<MenuBarDirty>,
+) {
+    dirty.0 = true;
+}
+
+fn apply_enabled_extensions_startup(world: &mut World) {
+    // Build up the list of names to enable, then run enable_extension
+    // for each. Mirrors `apply_enabled_from_disk` but operates on World
+    // directly (Startup systems have world access).
+    use jackdaw_api::{ExtensionCatalog, enable_extension};
+    let to_enable: Vec<String> = {
+        let catalog = world.resource::<ExtensionCatalog>();
+        let available: Vec<String> = catalog.iter().map(|s| s.to_string()).collect();
+        match extensions_config::read_enabled_list() {
+            Some(list) => {
+                let set: std::collections::HashSet<String> = list.into_iter().collect();
+                available.into_iter().filter(|n| set.contains(n)).collect()
+            }
+            None => available, // first run: enable everything
+        }
+    };
+    for name in &to_enable {
+        enable_extension(world, name);
     }
 }
 
@@ -1564,6 +1640,19 @@ fn populate_menu(world: &mut World) {
         return;
     };
 
+    // Despawn existing menu-bar items before re-populating. Idempotent on
+    // first call (nothing to remove), necessary for rebuilds when the
+    // window registry changes (extensions toggled on/off).
+    let existing: Vec<Entity> = world
+        .query_filtered::<Entity, With<jackdaw_widgets::menu_bar::MenuBarItem>>()
+        .iter(world)
+        .collect();
+    for entity in existing {
+        if let Ok(ec) = world.get_entity_mut(entity) {
+            ec.despawn();
+        }
+    }
+
     // Collect window entries from WindowRegistry grouped by default_area.
     // Built-in windows have a default_area, extension windows don't (empty string).
     let window_registry = world.resource::<jackdaw_panels::WindowRegistry>();
@@ -1624,6 +1713,7 @@ fn populate_menu(world: &mut World) {
                     ("file.save_template", "Save Selection as Template"),
                     ("---", ""),
                     ("file.keybinds", "Keybinds..."),
+                    ("file.plugins", "Plugins..."),
                     ("---", ""),
                     ("file.open_recent", "Open Recent..."),
                     ("file.home", "Home"),
@@ -1810,6 +1900,11 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
         "file.keybinds" => {
             commands.trigger(keybind_settings::OpenKeybindSettingsEvent);
         }
+        "file.plugins" => {
+            commands.queue(|world: &mut World| {
+                plugins_dialog::open_plugins_dialog(world);
+            });
+        }
         "file.home" => {
             commands.queue(|world: &mut World| {
                 world
@@ -1972,12 +2067,11 @@ fn spawn_undoable<F>(world: &mut World, label: &str, spawn: F)
 where
     F: Fn(&mut World) -> Entity + Send + Sync + 'static,
 {
-    let mut cmd: Box<dyn jackdaw_commands::EditorCommand> =
-        Box::new(commands::SpawnEntity {
-            spawned: None,
-            spawn_fn: Box::new(spawn),
-            label: label.to_string(),
-        });
+    let mut cmd: Box<dyn jackdaw_commands::EditorCommand> = Box::new(commands::SpawnEntity {
+        spawned: None,
+        spawn_fn: Box::new(spawn),
+        label: label.to_string(),
+    });
     cmd.execute(world);
     world
         .resource_mut::<commands::CommandHistory>()

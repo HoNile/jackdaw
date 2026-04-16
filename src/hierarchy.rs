@@ -82,6 +82,7 @@ impl Plugin for HierarchyPlugin {
             .add_observer(handle_inline_rename_commit)
             .add_observer(on_root_entity_added)
             .add_observer(on_entity_reparented)
+            .add_observer(on_entity_deparented)
             .add_observer(on_tree_node_expanded)
             .add_observer(on_tree_row_clicked)
             .add_observer(on_entity_removed)
@@ -441,6 +442,30 @@ fn on_entity_reparented(
         }
         spawn_single_tree_row(world, entity, container);
     });
+}
+
+/// When ChildOf is removed (entity deparented back to root, e.g. via undo of
+/// a reparent), move its tree row back to the root container. Without this,
+/// the tree UI shows stale parent information after an undo.
+fn on_entity_deparented(
+    trigger: On<Remove, ChildOf>,
+    mut commands: Commands,
+    tree_index: Res<TreeIndex>,
+    container: Option<Single<Entity, With<HierarchyTreeContainer>>>,
+    editor_check: Query<(), Or<(With<EditorEntity>, With<EditorHidden>)>>,
+    tree_node_check: Query<(), With<TreeNode>>,
+) {
+    let entity = trigger.event_target();
+    if editor_check.contains(entity) || tree_node_check.contains(entity) {
+        return;
+    }
+    let Some(container) = container else {
+        return;
+    };
+    let root_container = *container;
+    if let Some(tree_entity) = tree_index.get(entity) {
+        commands.entity(tree_entity).insert(ChildOf(root_container));
+    }
 }
 
 /// When an entity's Name is removed, despawn its tree row.
