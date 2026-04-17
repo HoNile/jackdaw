@@ -444,10 +444,11 @@ fn draw_camera_gizmo(
     }
 }
 
-/// Fallback marker for entities tagged with [`EmptyEntity`]: small
-/// wireframe cube at the origin so the entity is findable and
-/// selectable. Driven by the explicit marker component rather than a
-/// brittle "has no other notable component" filter.
+/// Fallback marker for entities tagged with
+/// [`crate::entity_ops::EmptyEntity`]: small wireframe cube at the
+/// origin so the entity is findable and selectable. Driven by the
+/// explicit marker component rather than a brittle "has no other
+/// notable component" filter.
 fn draw_empty_entity_marker(
     mut gizmos: Gizmos,
     settings: Res<OverlaySettings>,

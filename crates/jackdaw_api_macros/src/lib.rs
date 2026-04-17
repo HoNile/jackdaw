@@ -4,8 +4,8 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::{
-    Expr, ExprLit, ItemFn, Lit, LitBool, LitStr, MetaNameValue, Token, parse_macro_input,
-    punctuated::Punctuated, spanned::Spanned,
+    Expr, ExprLit, ExprPath, ItemFn, Lit, LitBool, LitStr, MetaNameValue, Path, Token,
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned,
 };
 
 /// Marks a plain Bevy system function as an operator. Generates the
@@ -23,13 +23,22 @@ use syn::{
 /// - `manual`: `bool`, default `false`. When `true`, no Fire observer
 ///   is wired up; callers invoke the operator via
 ///   `World::call_operator`.
+/// - `is_available`: path to a Bevy system returning `bool` that
+///   decides whether the operator can run in the current editor
+///   state. Runs before the execute system on every
+///   `World::call_operator` and via `World::is_operator_available`.
+///   If `false`, the operator returns `Cancelled` without executing.
 /// - `name`: override the generated struct name. Default is
 ///   `PascalCase(fn_name) + "Op"`.
 ///
 /// ```ignore
 /// use jackdaw_api::prelude::*;
 ///
-/// #[operator(id = "sample.hello", label = "Hello")]
+/// fn time_is_running(time: Res<Time>) -> bool {
+///     time.delta_secs_f32() > 0.0
+/// }
+///
+/// #[operator(id = "sample.hello", label = "Hello", is_available = time_is_running)]
 /// fn hello() -> OperatorResult {
 ///     info!("hello");
 ///     OperatorResult::Finished
@@ -38,7 +47,8 @@ use syn::{
 ///
 /// Expands to a `HelloOp` struct with `InputAction` derived and an
 /// `impl Operator for HelloOp` whose `register_execute` registers the
-/// `hello` function as a Bevy system.
+/// `hello` function as a Bevy system. When `is_available` is given,
+/// `register_availability_check` is emitted too.
 #[proc_macro_attribute]
 pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(
@@ -52,6 +62,7 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut modal: bool = false;
     let mut manual: bool = false;
     let mut name_override: Option<String> = None;
+    let mut is_available: Option<Path> = None;
 
     for arg in args {
         let Some(key) = arg.path.get_ident().map(|i| i.to_string()) else {
@@ -88,6 +99,18 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
                     name_override = Some(s.value());
                 }
             }
+            "is_available" => {
+                if let Some(p) = as_path(&arg.value) {
+                    is_available = Some(p);
+                } else {
+                    return syn::Error::new(
+                        arg.value.span(),
+                        "`is_available` must be the path of a Bevy system returning `bool`",
+                    )
+                    .into_compile_error()
+                    .into();
+                }
+            }
             other => {
                 return syn::Error::new(
                     arg.path.span(),
@@ -121,6 +144,16 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
     let vis = &item_fn.vis;
 
+    let availability_impl = is_available.map(|path| {
+        quote! {
+            fn register_availability_check(
+                commands: &mut ::bevy::ecs::system::Commands,
+            ) -> ::core::option::Option<::bevy::ecs::system::SystemId<(), bool>> {
+                ::core::option::Option::Some(commands.register_system(#path))
+            }
+        }
+    });
+
     let expanded = quote! {
         #[derive(::core::default::Default, ::bevy_enhanced_input::prelude::InputAction)]
         #[action_output(bool)]
@@ -138,6 +171,8 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
             ) -> ::bevy::ecs::system::SystemId<(), ::jackdaw_api::OperatorResult> {
                 commands.register_system(#fn_name)
             }
+
+            #availability_impl
         }
 
         #item_fn
@@ -163,6 +198,14 @@ fn as_lit_bool(expr: &Expr) -> Option<LitBool> {
     }) = expr
     {
         Some(b.clone())
+    } else {
+        None
+    }
+}
+
+fn as_path(expr: &Expr) -> Option<Path> {
+    if let Expr::Path(ExprPath { path, .. }) = expr {
+        Some(path.clone())
     } else {
         None
     }

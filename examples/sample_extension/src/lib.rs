@@ -1,6 +1,14 @@
-//! Sample extension. Registers a dock window and a `HelloOp` operator
-//! bound to F9. Disabling it in File > Extensions should remove the
-//! window entry and kill the keybind.
+//! Sample extension.
+//!
+//! Demonstrates three pieces of the extension API:
+//! - A plain dock window (`Hello Extension`).
+//! - A simple operator (`HelloOp`) bound to F9 that logs a message.
+//! - A second operator (`HelloTimeOp`) bound to F10 that uses an
+//!   `is_available` check: it only runs while time is advancing
+//!   (paused simulations return `Cancelled`).
+//!
+//! Disabling the extension in File > Extensions removes the window,
+//! kills both keybinds, and drops any registered menu entries.
 
 use std::sync::Arc;
 
@@ -30,11 +38,13 @@ impl JackdawExtension for SampleExtension {
         });
 
         ctx.register_operator::<HelloOp>();
+        ctx.register_operator::<HelloTimeOp>();
 
         ctx.spawn((
             SampleContext,
             actions!(SampleContext[
                 (Action::<HelloOp>::new(), bindings![KeyCode::F9]),
+                (Action::<HelloTimeOp>::new(), bindings![KeyCode::F10]),
             ]),
         ));
     }
@@ -55,5 +65,27 @@ pub struct SampleContext;
 )]
 fn hello_op() -> OperatorResult {
     info!("Hello from the sample extension operator!");
+    OperatorResult::Finished
+}
+
+/// Availability check for [`HelloTimeOp`]. Bevy systems returning
+/// `bool` can inject any `SystemParam`; here we read `Time` and only
+/// allow the operator to run while the clock is advancing.
+fn time_is_running(time: Res<Time>) -> bool {
+    time.delta_secs() > 0.0
+}
+
+#[operator(
+    id = "sample.hello_time",
+    label = "Hello (Time)",
+    description = "Logs a hello message, but only while time is advancing",
+    is_available = time_is_running,
+    name = "HelloTimeOp"
+)]
+fn hello_time_op(time: Res<Time>) -> OperatorResult {
+    info!(
+        "Hello at frame delta {:.3}s from the sample extension",
+        time.delta_secs()
+    );
     OperatorResult::Finished
 }
