@@ -274,7 +274,8 @@ impl ExtensionAppExt for App {
     fn register_extension<T: crate::JackdawExtension + Default>(&mut self) -> &mut Self {
         let ext = T::default();
         let name = ext.name();
-        // TODO: remove `name` duplication, just don't pass `name` to it and make it not take `self`
+        // TODO: remove `name` duplication
+        // can we do `fn name() -> String` without `&self` plz?
         register_extension(self, name, || Box::new(T::default()));
         self
     }

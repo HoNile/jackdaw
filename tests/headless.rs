@@ -44,7 +44,7 @@ fn can_run_extension() {
     app.register_extension::<SampleExtension>();
     app.finish();
     // first update sets the extension up
-    // todo: maybe do this in `Startup`?
+    // todo: maybe do plugin setup in `Startup` so that jackdaw is actually ready in the first frame?
     app.update();
     for _ in 0..10 {
         let result = app.world_mut().call_operator(SampleExtension::OP).unwrap();
@@ -65,7 +65,7 @@ fn can_call_operator() {
         .query_filtered::<(), With<Panel>>()
         .iter(app.world())
         .count();
-    // TODO: why is this panel not spawned?
+    // TODO: why is this panel not spawned? What do I need to do in order to make it spawn?
     assert_eq!(amount_of_panels, 0);
     assert!(!app.world_mut().contains_resource::<Marker>());
 
@@ -106,9 +106,11 @@ fn build_panel(world: &mut World, parent: Entity) {
 pub struct SampleContext;
 
 #[operator(
-    // TODO: replace with `SampleExtension::OP`
+    // TODO: replace with `SampleExtension::OP`. The current `operator` macro requires a string here, but an expression would be better
+    // see #[require(...)]
     id = "sample.spawn",
     label = "Spawn Marker",
+    // TODO: This bit here feels clunky. Could we use `heck` to generate the name in PascalCase for us?
     name = "SpawnMarkerOp"
 )]
 fn spawn_marker(mut commands: Commands) -> OperatorResult {
