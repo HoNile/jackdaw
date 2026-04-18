@@ -62,6 +62,8 @@ pub const TAB_ACTIVE_BG: Color = Color::srgb(0.165, 0.165, 0.180);
 pub const TAB_ACTIVE_BORDER: Color = Color::srgb(0.126, 0.431, 0.784);
 /// Inactive tab text (#A8A8A8)
 pub const TAB_INACTIVE_TEXT: Color = Color::srgb(0.659, 0.659, 0.659);
+/// The base color (full alpha) for the drop overlay for draggable tabs
+pub const DROP_OVERLAY_BASE: Color = Color::srgb(0.126, 0.431, 0.784);
 
 // ---------------------------------------------------------------------------
 // Document tab strip (top-level header tabs — Figma spec)

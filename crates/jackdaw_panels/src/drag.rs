@@ -5,7 +5,7 @@ use jackdaw_feathers::tokens;
 use crate::area::{DockArea, DockTab};
 use crate::reconcile::NodeBinding;
 use crate::sidebar::DockSidebarIcon;
-use crate::tabs::DockTabGrip;
+use crate::tabs::{DockTabGrip, DockTabRow};
 use crate::tree::{DockTree, Edge as TreeEdge};
 
 const DRAG_THRESHOLD: f32 = 5.0;
@@ -34,7 +34,11 @@ pub enum DockDragState {
 
 #[derive(Clone, Debug)]
 pub enum DropTarget {
-    TabBar(Entity),
+    Panel(Entity),
+    TabRow {
+        bar: Entity,
+        index: usize,
+    },
     AreaEdge {
         area: Entity,
         edge: DropEdge,
@@ -182,7 +186,19 @@ fn on_drag_move(
     mut drag_state: ResMut<DockDragState>,
     mut commands: Commands,
     areas: Query<(Entity, &ComputedNode, &UiGlobalTransform), With<DockArea>>,
+    tab_rows: Query<
+        (
+            Entity,
+            &ComputedNode,
+            &Node,
+            &UiGlobalTransform,
+            &Children,
+            &ChildOf,
+        ),
+        With<DockTabRow>,
+    >,
     viewports: Query<(&ComputedNode, &UiGlobalTransform), With<ViewportDropTarget>>,
+    node_query: Query<(&ComputedNode, &UiGlobalTransform)>,
     parent_query: Query<&ChildOf>,
 ) {
     let drag_event = trigger.event();
@@ -272,82 +288,173 @@ fn on_drag_move(
             let mut new_target = None;
             let mut new_overlay = None;
 
-            for (area_entity, computed, ui_transform) in &areas {
-                if !computed.contains_point(*ui_transform, cursor) {
+            for (tab_row_entity, computed, node, ui_transform, children, parent) in &tab_rows {
+                if !computed.contains_point(*ui_transform, cursor)
+                    && !node_query.get(parent.0).is_ok_and(|(computed, transform)| {
+                        computed.contains_point(*transform, cursor)
+                    })
+                {
                     continue;
                 }
 
-                let size = computed.size() * computed.inverse_scale_factor();
-                let (_scale, _angle, center) = ui_transform.to_scale_angle_translation();
-                let top_left = center - size / 2.0;
+                let mut closest_child: Option<(&UiGlobalTransform, &ComputedNode, usize, f32)> =
+                    None;
 
-                let rel = cursor - top_left;
-                let frac_x = rel.x / size.x;
-                let frac_y = rel.y / size.y;
+                for (index, child) in children.iter().enumerate() {
+                    let Ok((child_computed, child_transform)) = node_query.get(child) else {
+                        continue;
+                    };
 
-                let edge = if frac_y < 0.25 {
-                    Some(DropEdge::Top)
-                } else if frac_y > 0.75 {
-                    Some(DropEdge::Bottom)
-                } else if frac_x < 0.25 {
-                    Some(DropEdge::Left)
-                } else if frac_x > 0.75 {
-                    Some(DropEdge::Right)
-                } else {
-                    None
-                };
+                    let distance = child_transform.translation.distance_squared(cursor);
 
-                if let Some(edge) = edge {
-                    new_target = Some(DropTarget::AreaEdge {
-                        area: area_entity,
-                        edge,
-                    });
-
-                    let (overlay_pos, overlay_size) = edge_overlay_rect(top_left, size, edge);
-                    let overlay = commands
-                        .spawn((
-                            DropOverlay,
-                            Node {
-                                position_type: PositionType::Absolute,
-                                left: Val::Px(overlay_pos.x),
-                                top: Val::Px(overlay_pos.y),
-                                width: Val::Px(overlay_size.x),
-                                height: Val::Px(overlay_size.y),
-                                border: UiRect::all(Val::Px(2.0)),
-                                border_radius: BorderRadius::all(Val::Px(4.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.126, 0.431, 0.784, 0.25)),
-                            BorderColor::all(tokens::ACCENT_BLUE),
-                            GlobalZIndex(150),
-                        ))
-                        .id();
-                    new_overlay = Some(overlay);
-                } else {
-                    new_target = Some(DropTarget::TabBar(area_entity));
-
-                    let overlay = commands
-                        .spawn((
-                            DropOverlay,
-                            Node {
-                                position_type: PositionType::Absolute,
-                                left: Val::Px(top_left.x),
-                                top: Val::Px(top_left.y),
-                                width: Val::Px(size.x),
-                                height: Val::Px(size.y),
-                                border: UiRect::all(Val::Px(2.0)),
-                                border_radius: BorderRadius::all(Val::Px(4.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.126, 0.431, 0.784, 0.12)),
-                            BorderColor::all(tokens::ACCENT_BLUE),
-                            GlobalZIndex(150),
-                        ))
-                        .id();
-                    new_overlay = Some(overlay);
+                    if closest_child.is_none_or(|(_, _, _, closest_dist)| distance < closest_dist) {
+                        closest_child = Some((child_transform, child_computed, index, distance))
+                    }
                 }
 
+                let Some((child_transform, child_computed, mut index, _)) = closest_child else {
+                    continue;
+                };
+
+                let (is_far_side, is_vertical) =
+                    is_far_side(cursor, child_transform.translation, node);
+                if is_far_side {
+                    index += 1;
+                }
+
+                new_target = Some(DropTarget::TabRow {
+                    bar: tab_row_entity,
+                    index,
+                });
+
+                let child_size = child_computed.size();
+                let size_mult = if !is_vertical {
+                    Vec2::new(0.5, 1.0)
+                } else {
+                    Vec2::new(1.0, 0.5)
+                };
+
+                let overlay_size = child_size * size_mult;
+
+                let mut offset = if !is_vertical {
+                    Vec2::new(child_size.x, overlay_size.y)
+                } else {
+                    Vec2::new(overlay_size.x, child_size.y)
+                };
+
+                offset *= -0.5;
+
+                if is_far_side {
+                    if !is_vertical {
+                        offset.x = 0.0;
+                    } else {
+                        offset.y = 0.0;
+                    }
+                }
+
+                let overlay_pos = child_transform.translation + offset;
+
+                let overlay = commands
+                    .spawn((
+                        DropOverlay,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(overlay_pos.x),
+                            top: Val::Px(overlay_pos.y),
+                            width: Val::Px(overlay_size.x),
+                            height: Val::Px(overlay_size.y),
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(4.0)),
+                            ..Default::default()
+                        },
+                        BackgroundColor(tokens::DROP_OVERLAY_BASE.with_alpha(0.25)),
+                        BorderColor::all(tokens::ACCENT_BLUE),
+                        GlobalZIndex(150),
+                    ))
+                    .id();
+
+                new_overlay = Some(overlay);
                 break;
+            }
+
+            if new_target.is_none() {
+                for (area_entity, computed, ui_transform) in &areas {
+                    if !computed.contains_point(*ui_transform, cursor) {
+                        continue;
+                    }
+
+                    let size = computed.size() * computed.inverse_scale_factor();
+                    let (_scale, _angle, center) = ui_transform.to_scale_angle_translation();
+                    let top_left = center - size / 2.0;
+
+                    let rel = cursor - top_left;
+                    let frac_x = rel.x / size.x;
+                    let frac_y = rel.y / size.y;
+
+                    let edge = if frac_y < 0.25 {
+                        Some(DropEdge::Top)
+                    } else if frac_y > 0.75 {
+                        Some(DropEdge::Bottom)
+                    } else if frac_x < 0.25 {
+                        Some(DropEdge::Left)
+                    } else if frac_x > 0.75 {
+                        Some(DropEdge::Right)
+                    } else {
+                        None
+                    };
+
+                    if let Some(edge) = edge {
+                        new_target = Some(DropTarget::AreaEdge {
+                            area: area_entity,
+                            edge,
+                        });
+
+                        let (overlay_pos, overlay_size) = edge_overlay_rect(top_left, size, edge);
+                        let overlay = commands
+                            .spawn((
+                                DropOverlay,
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(overlay_pos.x),
+                                    top: Val::Px(overlay_pos.y),
+                                    width: Val::Px(overlay_size.x),
+                                    height: Val::Px(overlay_size.y),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(tokens::DROP_OVERLAY_BASE.with_alpha(0.25)),
+                                BorderColor::all(tokens::ACCENT_BLUE),
+                                GlobalZIndex(150),
+                            ))
+                            .id();
+                        new_overlay = Some(overlay);
+                    } else {
+                        new_target = Some(DropTarget::Panel(area_entity));
+
+                        let overlay = commands
+                            .spawn((
+                                DropOverlay,
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(top_left.x),
+                                    top: Val::Px(top_left.y),
+                                    width: Val::Px(size.x),
+                                    height: Val::Px(size.y),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(tokens::DROP_OVERLAY_BASE.with_alpha(0.12)),
+                                BorderColor::all(tokens::ACCENT_BLUE),
+                                GlobalZIndex(150),
+                            ))
+                            .id();
+                        new_overlay = Some(overlay);
+                    }
+
+                    break;
+                }
             }
 
             // Fall through to viewport hit-test when the cursor isn't
@@ -456,7 +563,7 @@ fn on_drag_end(
 
             if let Some(target) = drop_target {
                 match target {
-                    DropTarget::TabBar(target_area) => {
+                    DropTarget::Panel(target_area) => {
                         if target_area != source_area {
                             let wid = window_id.clone();
                             commands.queue(move |world: &mut World| {
@@ -475,6 +582,12 @@ fn on_drag_end(
                         commands.queue(move |world: &mut World| {
                             drop_on_viewport_edge(world, &wid, &anchor_id, edge);
                         });
+                    }
+                    DropTarget::TabRow { bar, index } => {
+                        let wid = window_id.clone();
+                        commands.queue(move |world: &mut World| {
+                            drop_on_tab_row(world, &wid, bar, index);
+                        })
                     }
                 }
             }
@@ -574,6 +687,28 @@ fn drop_on_viewport_edge(world: &mut World, window_id: &str, anchor_id: &str, ed
     }
 }
 
+/// Drop `window_id` onto the leaf bound to the `tab_row`'s area at index `index`
+fn drop_on_tab_row(world: &mut World, window_id: &str, tab_row: Entity, index: usize) {
+    let mut parent_query = world.query::<&ChildOf>();
+    let parent_query = parent_query.query(world);
+
+    let mut binding = None;
+    for parent in parent_query.iter_ancestors(tab_row) {
+        if let Some(node_binding) = world.entity(parent).get::<NodeBinding>() {
+            binding = Some(node_binding);
+            break;
+        }
+    }
+
+    let Some(binding) = binding.copied() else {
+        warn!("No `NodeBinding` found in parents of tab row {tab_row}");
+        return;
+    };
+
+    let mut tree = world.resource_mut::<DockTree>();
+    tree.insert_window(window_id, binding.0, true, Some(index));
+}
+
 fn find_parent_area(
     entity: Entity,
     parents: &Query<&ChildOf>,
@@ -603,5 +738,24 @@ fn edge_overlay_rect(top_left: Vec2, size: Vec2, edge: DropEdge) -> (Vec2, Vec2)
             Vec2::new(top_left.x + size.x * 0.5, top_left.y),
             Vec2::new(size.x * 0.5, size.y),
         ),
+    }
+}
+
+fn is_far_side(mouse_pos: Vec2, child_pos: Vec2, parent: &Node) -> (bool, bool) {
+    return match parent.flex_direction {
+        FlexDirection::Row => (is_far_side(mouse_pos, child_pos, false), false),
+        FlexDirection::RowReverse => (!is_far_side(mouse_pos, child_pos, false), false),
+        FlexDirection::Column => (is_far_side(mouse_pos, child_pos, true), true),
+        FlexDirection::ColumnReverse => (!is_far_side(mouse_pos, child_pos, true), true),
+    };
+
+    fn is_far_side(mouse_pos: Vec2, child_pos: Vec2, is_vertical: bool) -> bool {
+        let diff = if is_vertical {
+            mouse_pos.y - child_pos.y
+        } else {
+            mouse_pos.x - child_pos.x
+        };
+
+        diff > 0.0
     }
 }

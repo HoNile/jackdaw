@@ -376,10 +376,24 @@ impl DockTree {
     /// tab. If the source leaf becomes empty, it is removed and the tree
     /// simplified. No-op if `window` isn't in the tree or `to` isn't a leaf.
     pub fn move_window(&mut self, window: &str, to: NodeId) {
+        self.insert_window(window, to, false, None);
+    }
+
+    /// Move `window` out of its current leaf and into `to` at index `index` if some,
+    /// otherwise as the last tab as the active tab.
+    /// If the source leaf becomes empty, it is removed and the tree
+    /// simplified. No-op if `window` isn't in the tree or `to` isn't a leaf.
+    pub fn insert_window(
+        &mut self,
+        window: &str,
+        to: NodeId,
+        allow_same: bool,
+        index: Option<usize>,
+    ) {
         let Some(from) = self.find_leaf(window) else {
             return;
         };
-        if from == to {
+        if !allow_same && from == to {
             return;
         }
         if !matches!(self.nodes.get(&to), Some(DockNode::Leaf(_))) {
@@ -394,7 +408,12 @@ impl DockTree {
         }
         // Append to destination and activate.
         if let Some(DockNode::Leaf(l)) = self.nodes.get_mut(&to) {
-            l.windows.push(window.to_string());
+            if let Some(index) = index {
+                l.windows
+                    .insert(index.clamp(0, l.windows.len()), window.to_string());
+            } else {
+                l.windows.push(window.to_string());
+            }
             l.active = Some(window.to_string());
         }
         // Source may be empty now; simplify will collapse it.
