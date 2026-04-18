@@ -17,6 +17,7 @@ pub mod inspector;
 pub mod keybind_settings;
 pub mod keybinds;
 pub use inspector::{EditorMeta, ReflectEditorMeta};
+pub mod core_extension;
 pub mod extension_loader;
 pub mod extensions_config;
 pub mod extensions_dialog;
@@ -129,6 +130,7 @@ impl Plugin for EditorPlugin {
             .add_plugins(keybinds::KeybindsPlugin)
             .add_plugins(keybind_settings::KeybindSettingsPlugin)
             .add_plugins((
+                core_extension::plugin,
                 viewport_overlays::ViewportOverlaysPlugin,
                 view_modes::ViewModesPlugin,
                 status_bar::StatusBarPlugin,
