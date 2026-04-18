@@ -13,11 +13,12 @@ use bevy::prelude::*;
 use bevy_enhanced_input::prelude::*;
 use jackdaw_api::prelude::*;
 
+#[derive(Default)]
 pub struct ViewableCameraExtension;
 
 impl JackdawExtension for ViewableCameraExtension {
-    fn name(&self) -> &str {
-        "viewable_camera"
+    fn name() -> String {
+        "viewable_camera".to_string()
     }
 
     fn register_input_contexts(&self, app: &mut App) {

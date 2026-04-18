@@ -10,14 +10,15 @@ use jackdaw_api::{ExtensionContext, ExtensionKind, JackdawExtension, WindowDescr
 use jackdaw_feathers::icons::Icon;
 
 /// Scene Tree, Import, and Project Files in the left dock.
+#[derive(Default)]
 pub struct CoreWindowsExtension;
 
 impl JackdawExtension for CoreWindowsExtension {
-    fn name(&self) -> &str {
-        "core_windows"
+    fn name() -> String {
+        "core_windows".to_string()
     }
 
-    fn kind(&self) -> ExtensionKind {
+    fn kind() -> ExtensionKind {
         ExtensionKind::Builtin
     }
 
@@ -84,14 +85,15 @@ impl JackdawExtension for CoreWindowsExtension {
 }
 
 /// Assets window in the bottom dock.
+#[derive(Default)]
 pub struct AssetBrowserExtension;
 
 impl JackdawExtension for AssetBrowserExtension {
-    fn name(&self) -> &str {
-        "asset_browser"
+    fn name() -> String {
+        "asset_browser".to_string()
     }
 
-    fn kind(&self) -> ExtensionKind {
+    fn kind() -> ExtensionKind {
         ExtensionKind::Builtin
     }
 
@@ -120,14 +122,15 @@ impl JackdawExtension for AssetBrowserExtension {
 }
 
 /// Animation timeline in the bottom dock.
+#[derive(Default)]
 pub struct TimelineExtension;
 
 impl JackdawExtension for TimelineExtension {
-    fn name(&self) -> &str {
-        "timeline"
+    fn name() -> String {
+        "timeline".to_string()
     }
 
-    fn kind(&self) -> ExtensionKind {
+    fn kind() -> ExtensionKind {
         ExtensionKind::Builtin
     }
 
@@ -146,14 +149,15 @@ impl JackdawExtension for TimelineExtension {
 }
 
 /// Terminal placeholder in the bottom dock.
+#[derive(Default)]
 pub struct TerminalExtension;
 
 impl JackdawExtension for TerminalExtension {
-    fn name(&self) -> &str {
-        "terminal"
+    fn name() -> String {
+        "terminal".to_string()
     }
 
-    fn kind(&self) -> ExtensionKind {
+    fn kind() -> ExtensionKind {
         ExtensionKind::Builtin
     }
 
@@ -189,14 +193,15 @@ impl JackdawExtension for TerminalExtension {
 }
 
 /// Right-sidebar stack: Components, Materials, Resources, Systems.
+#[derive(Default)]
 pub struct InspectorExtension;
 
 impl JackdawExtension for InspectorExtension {
-    fn name(&self) -> &str {
-        "inspector"
+    fn name() -> String {
+        "inspector".to_string()
     }
 
-    fn kind(&self) -> ExtensionKind {
+    fn kind() -> ExtensionKind {
         ExtensionKind::Builtin
     }
 

@@ -73,7 +73,7 @@ pub use lifecycle::{
     ActiveModalOperator, CallOperatorError, CallOperatorSettings, Extension, ExtensionCatalog,
     ExtensionCtor, ExtensionKind, OperatorEntity, OperatorIndex, OperatorSession, OperatorWorldExt,
     RegisteredMenuEntry, RegisteredPanelExtension, RegisteredWindow, RegisteredWorkspace,
-    disable_extension, enable_extension, register_extension, tick_modal_operator, unload_extension,
+    disable_extension, enable_extension, tick_modal_operator, unload_extension,
 };
 pub use operator::{Operator, OperatorResult};
 pub use registries::PanelExtensionRegistry;
@@ -82,8 +82,8 @@ pub use snapshot::{ActiveSnapshotter, SceneSnapshot, SceneSnapshotter};
 /// Re-exports plugin authors will want in one import.
 pub mod prelude {
     pub use crate::lifecycle::{
-        CallOperatorError, CallOperatorSettings, Extension, ExtensionCatalog, ExtensionKind,
-        OperatorEntity, OperatorIndex, OperatorWorldExt,
+        CallOperatorError, CallOperatorSettings, Extension, ExtensionAppExt, ExtensionCatalog,
+        ExtensionKind, OperatorEntity, OperatorIndex, OperatorWorldExt,
     };
     pub use crate::operator::{Operator, OperatorResult};
     pub use crate::{
@@ -98,15 +98,21 @@ pub mod prelude {
 
 /// Trait implemented by every extension. Declares the extension's name
 /// and registration logic; the framework handles everything else.
-pub trait JackdawExtension: Send + Sync + 'static {
-    fn name(&self) -> &str;
+pub trait JackdawExtension: Send + Sync + 'static + DynJackdawExtension {
+    /// A human-readable name for this extension. This will be displayed in UIs.
+    fn name() -> String
+    where
+        Self: Sized;
 
     /// Classify this extension. Defaults to [`ExtensionKind::Custom`].
     ///
     /// The Extensions dialog reads this to split the list into Built-in
     /// and Custom sections. Reserved as a future hook for marketplace
     /// categories.
-    fn kind(&self) -> ExtensionKind {
+    fn kind() -> ExtensionKind
+    where
+        Self: Sized,
+    {
         ExtensionKind::Custom
     }
 
@@ -119,7 +125,8 @@ pub trait JackdawExtension: Send + Sync + 'static {
     ///
     /// Defaults to no-op; override only if the extension adds BEI
     /// contexts.
-    fn register_input_contexts(&self, _app: &mut App) {}
+    #[expect(unused_variables, reason = "The default implementation does nothing")]
+    fn register_input_contexts(&self, app: &mut App) {}
 
     /// Main registration logic. Called each time the extension is
     /// enabled. Spawn operators, windows, BEI action entities, and any
@@ -131,7 +138,27 @@ pub trait JackdawExtension: Send + Sync + 'static {
     /// Child-entity cleanup handles registered windows, operators, BEI
     /// contexts, and observers automatically. Override only for non-ECS
     /// state (file handles, network sessions, and the like).
-    fn unregister(&self, _world: &mut World, _extension_entity: Entity) {}
+    #[expect(unused_variables, reason = "The default implementation does nothing")]
+    fn unregister(&self, world: &mut World, extension_entity: Entity) {}
+}
+
+/// Allows access to the extension's static methods via a dynamic dispatch.
+/// This is needed for when you're holding a `Box<dyn JackdawExtension>` and need to call methods that wouldn't require `self`.
+pub trait DynJackdawExtension {
+    /// Returns [`JackdawExtension::name`] via dynamic dispatch.
+    fn dyn_name(&self) -> String;
+    /// Returns [`JackdawExtension::kind`] via dynamic dispatch.
+    fn dyn_kind(&self) -> ExtensionKind;
+}
+
+impl<T: JackdawExtension> DynJackdawExtension for T {
+    fn dyn_name(&self) -> String {
+        T::name()
+    }
+
+    fn dyn_kind(&self) -> ExtensionKind {
+        T::kind()
+    }
 }
 
 /// Passed to [`JackdawExtension::register`]. Holds the extension entity
@@ -379,7 +406,7 @@ pub type SectionBuildFn = Arc<dyn Fn(&mut World, PanelContext) + Send + Sync>;
 /// [`JackdawExtension::register_input_contexts`], which is called at
 /// catalog registration time with App access.
 pub fn load_static_extension(world: &mut World, extension: Box<dyn JackdawExtension>) -> Entity {
-    let name = extension.name().to_string();
+    let name = extension.dyn_name();
     info!("Loading extension: {}", name);
 
     let extension_entity = world.spawn(Extension { name }).id();

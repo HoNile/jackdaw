@@ -56,9 +56,9 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
     );
     let item_fn = parse_macro_input!(item as ItemFn);
 
-    let mut id: Option<LitStr> = None;
-    let mut label: Option<LitStr> = None;
-    let mut description: Option<LitStr> = None;
+    let mut id: Option<Expr> = None;
+    let mut label: Option<Expr> = None;
+    let mut description: Option<Expr> = None;
     let mut modal: bool = false;
     let mut manual: bool = false;
     let mut name_override: Option<String> = None;
@@ -70,17 +70,17 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
         };
         match key.as_str() {
             "id" => {
-                if let Some(s) = as_lit_str(&arg.value) {
+                if let Some(s) = as_str_expr(&arg.value) {
                     id = Some(s);
                 }
             }
             "label" => {
-                if let Some(s) = as_lit_str(&arg.value) {
+                if let Some(s) = as_str_expr(&arg.value) {
                     label = Some(s);
                 }
             }
             "description" => {
-                if let Some(s) = as_lit_str(&arg.value) {
+                if let Some(s) = as_str_expr(&arg.value) {
                     description = Some(s);
                 }
             }
@@ -127,15 +127,13 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
             .into_compile_error()
             .into();
     };
-    let Some(label) = label else {
-        return syn::Error::new(
-            Span::call_site(),
-            "`#[operator]` requires `label = \"...\"`",
-        )
-        .into_compile_error()
-        .into();
-    };
-    let description = description.unwrap_or_else(|| LitStr::new("", Span::call_site()));
+    let label = label.unwrap_or(id.clone());
+    let description = description.unwrap_or_else(|| {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(LitStr::new("", Span::call_site())),
+            attrs: vec![],
+        })
+    });
 
     let fn_name = &item_fn.sig.ident;
     let struct_name = match name_override {
@@ -189,6 +187,18 @@ fn as_lit_str(expr: &Expr) -> Option<LitStr> {
         Some(s.clone())
     } else {
         None
+    }
+}
+
+fn as_str_expr(expr: &Expr) -> Option<Expr> {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(_), ..
+        }) => Some(expr.clone()),
+
+        Expr::Path(_) => Some(expr.clone()),
+
+        _ => None,
     }
 }
 
