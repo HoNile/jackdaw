@@ -106,12 +106,7 @@ fn build_panel(world: &mut World, parent: Entity) {
 pub struct SampleContext;
 
 #[operator(
-    // TODO: replace with `SampleExtension::OP`. The current `operator` macro requires a string here, but an expression would be better
-    // see #[require(...)]
-    id = "sample.spawn",
-    label = "Spawn Marker",
-    // TODO: This bit here feels clunky. Could we use `heck` to generate the name in PascalCase for us?
-    name = "SpawnMarkerOp"
+    id = SampleExtension::OP,
 )]
 fn spawn_marker(mut commands: Commands) -> OperatorResult {
     commands.init_resource::<Marker>();

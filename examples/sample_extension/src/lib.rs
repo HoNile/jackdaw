@@ -43,6 +43,7 @@ impl JackdawExtension for SampleExtension {
         ctx.spawn((
             SampleContext,
             actions!(SampleContext[
+                // the `hello` operator function generates a struct called `HelloOp`
                 (Action::<HelloOp>::new(), bindings![KeyCode::F9]),
                 (Action::<HelloTimeOp>::new(), bindings![KeyCode::F10]),
             ]),
@@ -60,10 +61,9 @@ pub struct SampleContext;
 #[operator(
     id = "sample.hello",
     label = "Hello",
-    description = "Logs a hello message",
-    name = "HelloOp"
+    description = "Logs a hello message"
 )]
-fn hello_op() -> OperatorResult {
+fn hello() -> OperatorResult {
     info!("Hello from the sample extension operator!");
     OperatorResult::Finished
 }
@@ -80,9 +80,8 @@ fn time_is_running(time: Res<Time>) -> bool {
     label = "Hello (Time)",
     description = "Logs a hello message, but only while time is advancing",
     is_available = time_is_running,
-    name = "HelloTimeOp"
 )]
-fn hello_time_op(time: Res<Time>) -> OperatorResult {
+fn hello_time(time: Res<Time>) -> OperatorResult {
     info!(
         "Hello at frame delta {:.3}s from the sample extension",
         time.delta_secs()
