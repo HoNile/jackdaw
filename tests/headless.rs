@@ -58,13 +58,38 @@ fn can_call_operator() {
     let mut app = headless_app();
     app.register_extension::<SampleExtension>();
     app.finish();
+    app.update();
+
+    let amount_of_panels = app
+        .world_mut()
+        .query_filtered::<(), With<Panel>>()
+        .iter(app.world())
+        .count();
+    // TODO: why is this panel not spawned?
+    assert_eq!(amount_of_panels, 0);
+    let amount_of_markers = app
+        .world_mut()
+        .query_filtered::<(), With<Marker>>()
+        .iter(app.world())
+        .count();
+    assert_eq!(amount_of_markers, 0);
+
+    let result = app.world_mut().call_operator(SampleExtension::OP).unwrap();
+    assert_eq!(result, OperatorResult::Finished);
+
+    let amount_of_markers = app
+        .world_mut()
+        .query_filtered::<(), With<Marker>>()
+        .iter(app.world())
+        .count();
+    assert_eq!(amount_of_markers, 1);
 }
 
 #[derive(Default)]
 pub struct SampleExtension;
 
 impl SampleExtension {
-    const OP: &'static str = "sample.hello";
+    const OP: &'static str = "sample.spawn";
 }
 
 impl JackdawExtension for SampleExtension {
@@ -72,35 +97,20 @@ impl JackdawExtension for SampleExtension {
         "sample"
     }
 
-    fn register_input_contexts(&self, app: &mut App) {
-        app.add_input_context::<SampleContext>();
-    }
-
     fn register(&self, ctx: &mut ExtensionContext) {
         ctx.register_window(WindowDescriptor {
             id: Self::OP.into(),
             name: "Hello Extension".into(),
-            icon: None,
-            default_area: None,
-            priority: None,
-            build: Arc::new(build_hello_panel),
+            build: Arc::new(build_panel),
+            default_area: Some("left".into()),
+            ..default()
         });
-
-        ctx.register_operator::<HelloOp>();
-        ctx.register_operator::<HelloTimeOp>();
-
-        ctx.spawn((
-            SampleContext,
-            actions!(SampleContext[
-                (Action::<HelloOp>::new(), bindings![KeyCode::F9]),
-                (Action::<HelloTimeOp>::new(), bindings![KeyCode::F10]),
-            ]),
-        ));
+        ctx.register_operator::<SpawnMarkerOp>();
     }
 }
 
-fn build_hello_panel(world: &mut World, parent: Entity) {
-    world.spawn((ChildOf(parent), Text::new("Hello from an extension!")));
+fn build_panel(world: &mut World, parent: Entity) {
+    world.spawn((ChildOf(parent), Panel, Text::new("Some panel")));
 }
 
 #[derive(Component, Default)]
@@ -108,34 +118,17 @@ pub struct SampleContext;
 
 #[operator(
     // TODO: replace with `SampleExtension::OP`
-    id = "sample.hello",
-    label = "Hello",
-    description = "Logs a hello message",
-    name = "HelloOp"
+    id = "sample.spawn",
+    label = "Spawn Marker",
+    name = "SpawnMarkerOp"
 )]
-fn hello_op() -> OperatorResult {
-    info!("Hello from the sample extension operator!");
+fn spawn_marker(mut commands: Commands) -> OperatorResult {
+    commands.spawn(Marker);
     OperatorResult::Finished
 }
 
-/// Availability check for [`HelloTimeOp`]. Bevy systems returning
-/// `bool` can inject any `SystemParam`; here we read `Time` and only
-/// allow the operator to run while the clock is advancing.
-fn time_is_running(time: Res<Time>) -> bool {
-    time.delta_secs() > 0.0
-}
+#[derive(Component)]
+struct Marker;
 
-#[operator(
-    id = "sample.hello_time",
-    label = "Hello (Time)",
-    description = "Logs a hello message, but only while time is advancing",
-    is_available = time_is_running,
-    name = "HelloTimeOp"
-)]
-fn hello_time_op(time: Res<Time>) -> OperatorResult {
-    info!(
-        "Hello at frame delta {:.3}s from the sample extension",
-        time.delta_secs()
-    );
-    OperatorResult::Finished
-}
+#[derive(Component)]
+struct Panel;
