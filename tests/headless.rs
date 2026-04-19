@@ -106,7 +106,7 @@ fn build_panel(world: &mut World, parent: Entity) {
 #[operator(
     id = SampleExtension::SPAWN,
 )]
-fn spawn_marker(_: In<CustomProperties>, mut commands: Commands) -> OperatorResult {
+fn spawn_marker(_: In<OperatorParameters>, mut commands: Commands) -> OperatorResult {
     commands.init_resource::<Marker>();
     OperatorResult::Finished
 }
@@ -114,7 +114,7 @@ fn spawn_marker(_: In<CustomProperties>, mut commands: Commands) -> OperatorResu
 #[operator(
     id = SampleExtension::CHECK_PARAMS,
 )]
-fn check_params(params: In<CustomProperties>) -> OperatorResult {
+fn check_params(params: In<OperatorParameters>) -> OperatorResult {
     assert_eq!(params["foo"], "bar".into());
     assert_eq!(params["baz"], 42.into());
     OperatorResult::Finished

@@ -1,10 +1,10 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::BTreeMap};
 
 use bevy::ecs::system::SystemId;
 use bevy::prelude::*;
 use bevy_enhanced_input::prelude::InputAction;
 use jackdaw_commands::{CommandHistory, EditorCommand};
-use jackdaw_jsn::{CustomProperties, PropertyValue};
+use jackdaw_jsn::PropertyValue;
 
 use crate::{
     ActiveSnapshotter, SceneSnapshot,
@@ -35,12 +35,12 @@ pub(super) fn plugin(app: &mut App) {
 ///     const ID: &'static str = "sample.place_cube";
 ///     const LABEL: &'static str = "Place Cube";
 ///
-///     fn register_execute(commands: &mut Commands) -> SystemId<In<CustomProperties>, OperatorResult> {
+///     fn register_execute(commands: &mut Commands) -> SystemId<In<OperatorParameters>, OperatorResult> {
 ///         commands.register_system(place_cube)
 ///     }
 /// }
 ///
-/// fn place_cube(_: In<CustomProperties>, mut commands: Commands) -> OperatorResult {
+/// fn place_cube(_: In<OperatorParameters>, mut commands: Commands) -> OperatorResult {
 ///     commands.spawn((Name::new("Cube"), Transform::default()));
 ///     OperatorResult::Finished
 /// }
@@ -84,7 +84,7 @@ pub trait Operator: InputAction + 'static {
     /// `ExtensionContext::register_operator::<Self>()`. The returned
     /// `SystemId` is stored on the operator entity and unregistered
     /// on despawn.
-    fn register_execute(commands: &mut Commands) -> SystemId<In<CustomProperties>, OperatorResult>;
+    fn register_execute(commands: &mut Commands) -> OperatorSystemId;
 
     /// Register an optional availability check. Returns `true` if the
     /// operator can run in the current editor state, `false` if it
@@ -97,10 +97,15 @@ pub trait Operator: InputAction + 'static {
     /// keybinds, and F3 search run; it can differ from `execute`
     /// when the caller wants to open a dialog or start a drag before
     /// the primary work happens. Defaults to `execute`.
-    fn register_invoke(commands: &mut Commands) -> SystemId<In<CustomProperties>, OperatorResult> {
+    fn register_invoke(commands: &mut Commands) -> OperatorSystemId {
         Self::register_execute(commands)
     }
 }
+
+#[derive(Debug, Clone, Default, Deref, DerefMut, Reflect)]
+pub struct OperatorParameters(pub BTreeMap<String, PropertyValue>);
+
+pub type OperatorSystemId = SystemId<In<OperatorParameters>, OperatorResult>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use = "Operators may not be `Finished`, which should usually be handled"]
@@ -196,7 +201,7 @@ impl std::error::Error for CallOperatorError {}
 pub struct OperatorCallBuilder<'a> {
     world: &'a mut World,
     id: Cow<'static, str>,
-    params: CustomProperties,
+    params: OperatorParameters,
     settings: CallOperatorSettings,
 }
 
@@ -254,7 +259,7 @@ impl OperatorWorldExt for World {
         OperatorCallBuilder {
             world: self,
             id: id.into(),
-            params: CustomProperties::default(),
+            params: OperatorParameters::default(),
             settings: CallOperatorSettings::default(),
         }
     }
@@ -263,7 +268,7 @@ impl OperatorWorldExt for World {
 fn dispatch_operator(
     world: &mut World,
     id: impl Into<Cow<'static, str>>,
-    params: impl Into<CustomProperties>,
+    params: impl Into<OperatorParameters>,
     settings: CallOperatorSettings,
 ) -> Result<OperatorResult, CallOperatorError> {
     let id = id.into();

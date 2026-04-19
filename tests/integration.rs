@@ -14,7 +14,7 @@ fn run_integration_tests() {
 }
 
 #[operator(id = ID)]
-fn integration_test_one(_: In<CustomProperties>) -> OperatorResult {
+fn integration_test_one(_: In<OperatorParameters>) -> OperatorResult {
     // todo: fill in an actual test and write more!
     OperatorResult::Finished
 }

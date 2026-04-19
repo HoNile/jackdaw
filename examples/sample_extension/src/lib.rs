@@ -63,7 +63,7 @@ pub struct SampleContext;
     label = "Hello",
     description = "Logs a hello message"
 )]
-fn hello(_: In<CustomProperties>) -> OperatorResult {
+fn hello(_: In<OperatorParameters>) -> OperatorResult {
     info!("Hello from the sample extension operator!");
     OperatorResult::Finished
 }
@@ -81,7 +81,7 @@ fn time_is_running(time: Res<Time>) -> bool {
     description = "Logs a hello message, but only while time is advancing",
     is_available = time_is_running,
 )]
-fn hello_time(_: In<CustomProperties>, time: Res<Time>) -> OperatorResult {
+fn hello_time(_: In<OperatorParameters>, time: Res<Time>) -> OperatorResult {
     info!(
         "Hello at frame delta {:.3}s from the sample extension",
         time.delta_secs()

@@ -91,7 +91,7 @@ struct CameraPreviewState {
     description = "Place a camera at the viewport position",
     name = "PlaceViewableCamera"
 )]
-fn place_viewable_camera(_: In<CustomProperties>, world: &mut World) -> OperatorResult {
+fn place_viewable_camera(_: In<OperatorParameters>, world: &mut World) -> OperatorResult {
     // Match the editor camera's transform so "look through" feels
     // natural on the first toggle.
     let spawn_transform = find_editor_camera(world)
@@ -133,7 +133,7 @@ fn place_viewable_camera(_: In<CustomProperties>, world: &mut World) -> Operator
     description = "Look through the selected viewable camera",
     name = "ToggleCameraPreview"
 )]
-fn toggle_preview(_: In<CustomProperties>, world: &mut World) -> OperatorResult {
+fn toggle_preview(_: In<OperatorParameters>, world: &mut World) -> OperatorResult {
     let currently_active = world.resource::<CameraPreviewState>().active;
     if currently_active.is_some() {
         restore_editor_camera(world);

@@ -39,7 +39,7 @@ use syn::{
 /// }
 ///
 /// #[operator(id = "sample.hello", label = "Hello", is_available = time_is_running)]
-/// fn hello(_: In<CustomProperties>) -> OperatorResult {
+/// fn hello(_: In<OperatorParameters>) -> OperatorResult {
 ///     info!("hello");
 ///     OperatorResult::Finished
 /// }
@@ -166,7 +166,7 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
 
             fn register_execute(
                 commands: &mut ::bevy::ecs::system::Commands,
-            ) -> ::bevy::ecs::system::SystemId<::bevy::ecs::system::In<::jackdaw_api::jsn::CustomProperties>, ::jackdaw_api::prelude::OperatorResult> {
+            ) -> ::jackdaw_api::prelude::OperatorSystemId {
                 commands.register_system(#fn_name)
             }
 

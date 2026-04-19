@@ -14,7 +14,7 @@
 //! use jackdaw_api::prelude::*;
 //!
 //! #[operator(id = "sample.place_cube")]
-//! fn place_cube(_: In<CustomProperties>, mut commands: Commands) -> OperatorResult {
+//! fn place_cube(_: In<OperatorParameters>, mut commands: Commands) -> OperatorResult {
 //!     // Operators are plain Bevy systems. Mutate the world however you
 //!     // like; the dispatcher snapshots the scene before invoke and diffs
 //!     // after, so a single Ctrl+Z reverses the entire call.
@@ -87,7 +87,8 @@ pub mod prelude {
         },
         macros::operator,
         operator::{
-            CallOperatorSettings, ExecutionContext, Operator, OperatorResult, OperatorWorldExt as _,
+            CallOperatorSettings, ExecutionContext, Operator, OperatorParameters, OperatorResult,
+            OperatorSystemId, OperatorWorldExt as _,
         },
         snapshot::{ActiveSnapshotter, SceneSnapshot, SceneSnapshotter},
     };

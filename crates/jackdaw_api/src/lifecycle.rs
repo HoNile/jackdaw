@@ -12,12 +12,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::prelude::OperatorSystemId;
+use crate::snapshot::SceneSnapshot;
 use bevy::ecs::system::SystemId;
 use bevy::prelude::*;
-use jackdaw_jsn::CustomProperties;
-
-use crate::operator::OperatorResult;
-use crate::snapshot::SceneSnapshot;
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<ExtensionCatalog>()
@@ -53,8 +51,8 @@ pub(crate) struct OperatorEntity {
     pub(crate) label: &'static str,
     #[expect(dead_code, reason = "This should go into the UI eventually")]
     pub(crate) description: &'static str,
-    pub(crate) execute: SystemId<In<CustomProperties>, OperatorResult>,
-    pub(crate) invoke: SystemId<In<CustomProperties>, OperatorResult>,
+    pub(crate) execute: OperatorSystemId,
+    pub(crate) invoke: OperatorSystemId,
     /// Optional system that returns whether the operator can run in
     /// the current editor state. Equivalent to Blender's `poll`.
     pub(crate) availability_check: Option<SystemId<(), bool>>,
@@ -75,7 +73,7 @@ pub(crate) struct OperatorEntity {
 pub(crate) struct ActiveModalOperator {
     pub(crate) id: Option<&'static str>,
     pub(crate) operator_entity: Option<Entity>,
-    pub(crate) invoke_system: Option<SystemId<In<CustomProperties>, OperatorResult>>,
+    pub(crate) invoke_system: Option<OperatorSystemId>,
     pub(crate) label: Option<String>,
     pub(crate) before_snapshot: Option<Box<dyn SceneSnapshot>>,
 }
