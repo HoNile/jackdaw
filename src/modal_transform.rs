@@ -32,11 +32,12 @@ pub enum ModalConstraint {
     Plane(GizmoAxis),
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource, Debug, Default)]
 pub struct ModalTransformState {
     pub active: Option<ActiveModal>,
 }
 
+#[derive(Debug)]
 pub struct ActiveModal {
     pub op: ModalOp,
     pub entity: Entity,

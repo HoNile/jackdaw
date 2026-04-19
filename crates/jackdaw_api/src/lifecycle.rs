@@ -12,8 +12,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::prelude::OperatorSystemId;
-use crate::snapshot::SceneSnapshot;
+use crate::prelude::*;
 use bevy::ecs::component::ComponentId;
 use bevy::ecs::system::SystemId;
 use bevy::prelude::*;
@@ -21,13 +20,13 @@ use bevy::prelude::*;
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<ExtensionCatalog>()
         .init_resource::<OperatorIndex>()
-        .init_resource::<ActiveModalOperator>()
         .add_observer(index_operator_on_add)
         .add_observer(deindex_and_cleanup_operator_on_remove)
         .add_observer(cleanup_window_on_remove)
         .add_observer(cleanup_workspace_on_remove)
         .add_observer(cleanup_panel_extension_on_remove)
         .add_observer(cleanup_resource_on_remove);
+    app.world_mut().register_component::<ActiveModalOperator>();
 }
 
 /// Root component for an extension.
@@ -87,6 +86,7 @@ pub(crate) struct OperatorEntity {
     /// Mirrors [`crate::Operator::MODAL`]. Set at registration so the
     /// dispatcher can enter modal mode without re-resolving the generic
     /// operator type.
+    pub(crate) cancel: Option<SystemId<()>>,
     pub(crate) modal: bool,
 }
 
@@ -97,12 +97,8 @@ pub(crate) struct OperatorEntity {
 /// The `before_snapshot` is captured when the modal begins; on commit
 /// the dispatcher diffs it against a fresh snapshot and pushes a single
 /// undo entry, so the entire modal session rolls up into one Ctrl+Z.
-#[derive(Resource, Default)]
-pub(crate) struct ActiveModalOperator {
-    pub(crate) id: Option<&'static str>,
-    pub(crate) operator_entity: Option<Entity>,
-    pub(crate) invoke_system: Option<OperatorSystemId>,
-    pub(crate) label: Option<String>,
+#[derive(Component)]
+pub struct ActiveModalOperator {
     pub(crate) before_snapshot: Option<Box<dyn SceneSnapshot>>,
 }
 

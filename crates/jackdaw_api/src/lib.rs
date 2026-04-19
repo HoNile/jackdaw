@@ -305,14 +305,15 @@ impl<'a> ExtensionContext<'a> {
     pub fn register_operator<O: Operator>(&mut self) -> &mut Self {
         let ext = self.extension_entity;
 
-        let (execute, invoke, availability_check) = {
+        let (execute, invoke, availability_check, cancel) = {
             let mut queue = bevy::ecs::world::CommandQueue::default();
             let mut commands = Commands::new(&mut queue, self.world);
             let execute = O::register_execute(&mut commands);
             let invoke = O::register_invoke(&mut commands);
             let availability_check = O::register_availability_check(&mut commands);
+            let cancel = O::register_cancel(&mut commands);
             queue.apply(self.world);
-            (execute, invoke, availability_check)
+            (execute, invoke, availability_check, cancel)
         };
 
         let op_entity = self
@@ -325,6 +326,7 @@ impl<'a> ExtensionContext<'a> {
                     execute,
                     invoke,
                     availability_check,
+                    cancel,
                     modal: O::MODAL,
                 },
                 ChildOf(ext),

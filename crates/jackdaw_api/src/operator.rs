@@ -1,6 +1,6 @@
 use std::{borrow::Cow, collections::BTreeMap};
 
-use bevy::ecs::system::SystemId;
+use bevy::ecs::system::{SystemId, SystemState};
 use bevy::prelude::*;
 use bevy_enhanced_input::prelude::InputAction;
 use jackdaw_commands::{CommandHistory, EditorCommand};
@@ -12,8 +12,7 @@ use crate::{
 };
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_resource::<OperatorSession>()
-        .add_systems(Update, tick_modal_operator);
+    app.add_systems(Update, tick_modal_operator);
 }
 
 /// A Blender-style operator.
@@ -89,7 +88,8 @@ pub trait Operator: InputAction + 'static {
     /// Register an optional availability check. Returns `true` if the
     /// operator can run in the current editor state, `false` if it
     /// should be skipped. Default: always callable.
-    fn register_availability_check(_commands: &mut Commands) -> Option<SystemId<(), bool>> {
+    #[expect(unused_variables, reason = "The default implementation noops")]
+    fn register_availability_check(commands: &mut Commands) -> Option<SystemId<(), bool>> {
         None
     }
 
@@ -99,6 +99,12 @@ pub trait Operator: InputAction + 'static {
     /// the primary work happens. Defaults to `execute`.
     fn register_invoke(commands: &mut Commands) -> OperatorSystemId {
         Self::register_execute(commands)
+    }
+
+    /// Register an optional cancel system. `invoke` is what UI,
+    #[expect(unused_variables, reason = "The default implementation noops")]
+    fn register_cancel(commands: &mut Commands) -> Option<SystemId<()>> {
+        None
     }
 }
 
@@ -250,7 +256,13 @@ impl<'a> OperatorCallBuilder<'a> {
     /// invoke system, so validation logic lives only on the operator
     /// itself.
     pub fn call(self) -> Result<OperatorResult, CallOperatorError> {
-        dispatch_operator(self.world, self.id, self.params, self.settings)
+        let result = self
+            .world
+            .run_system_cached_with(dispatch_operator, (self.id, self.params, self.settings));
+        match result {
+            Ok(result) => result,
+            Err(_) => Err(CallOperatorError::ExecuteFailed),
+        }
     }
 }
 
@@ -266,17 +278,15 @@ impl OperatorWorldExt for World {
 }
 
 fn dispatch_operator(
+    In((id, params, settings)): In<(Cow<'static, str>, OperatorParameters, CallOperatorSettings)>,
     world: &mut World,
-    id: impl Into<Cow<'static, str>>,
-    params: impl Into<OperatorParameters>,
-    settings: CallOperatorSettings,
+    active: &mut SystemState<Option<Single<&OperatorEntity, With<ActiveModalOperator>>>>,
 ) -> Result<OperatorResult, CallOperatorError> {
-    let id = id.into();
     info!("OPERATOR: {id}");
     let params = params.into();
 
-    if let Some(active_id) = world.resource::<ActiveModalOperator>().id {
-        return Err(CallOperatorError::ModalAlreadyActive(active_id));
+    if let Some(active) = active.get(world) {
+        return Err(CallOperatorError::ModalAlreadyActive(active.id));
     }
 
     let Some(op_entity) = world
@@ -303,58 +313,43 @@ fn dispatch_operator(
     // Only the outermost operator in a nesting chain captures the
     // snapshot. Inner `operator` calls mutate inside the outer's
     // span and their changes roll into the outer's diff.
-    let is_outermost = world.resource::<OperatorSession>().is_outermost();
-    let before = (is_outermost && settings.creates_history_entry)
+    let before_snapshot = settings
+        .creates_history_entry
         .then(|| world.resource::<ActiveSnapshotter>().0.capture(world));
 
-    world.resource_mut::<OperatorSession>().depth += 1;
     let system = match settings.execution_context {
         ExecutionContext::Execute => op.execute,
         ExecutionContext::Invoke => op.invoke,
     };
     let result = world.run_system_with(system, params);
-    world.resource_mut::<OperatorSession>().depth -= 1;
 
     let result = result.map_err(|_| CallOperatorError::ExecuteFailed)?;
 
     match result {
         OperatorResult::Running if op.modal => {
-            let mut active = world.resource_mut::<ActiveModalOperator>();
-            active.id = Some(op.id);
-            active.operator_entity = Some(op_entity);
-            active.invoke_system = Some(op.invoke);
-            active.label = Some(op.label.to_string());
-            active.before_snapshot = before;
+            world
+                .entity_mut(op_entity)
+                .insert(ActiveModalOperator { before_snapshot });
         }
         OperatorResult::Running | OperatorResult::Finished => {
-            finalize(world, op.label, before);
+            if let Err(err) = world.run_system_cached_with(finalize, (op.label, before_snapshot)) {
+                error!("Failed to finalize modal operator {}: {err:?}", op.label);
+            }
         }
         OperatorResult::Cancelled => {
             // Drop the snapshot without pushing history.
-            drop(before);
         }
     }
 
     Ok(result)
 }
 
-/// Counts how deeply operators are nested. The outermost operator in
-/// a call chain takes the snapshot; inner operators' mutations roll
-/// into that outer diff.
-#[derive(Resource, Default)]
-pub(crate) struct OperatorSession {
-    pub(crate) depth: u32,
-}
-
-impl OperatorSession {
-    pub(crate) fn is_outermost(&self) -> bool {
-        self.depth == 0
-    }
-}
-
 /// Capture the current state, diff against `before`, and push a
 /// `SnapshotDiff` onto [`CommandHistory`] if the scene changed.
-fn finalize(world: &mut World, label: &str, before: Option<Box<dyn SceneSnapshot>>) {
+fn finalize(
+    In((label, before)): In<(&'static str, Option<Box<dyn SceneSnapshot>>)>,
+    world: &mut World,
+) {
     let Some(before) = before else { return };
     let after = world.resource::<ActiveSnapshotter>().0.capture(world);
     if before.equals(&*after) {
@@ -390,38 +385,59 @@ impl EditorCommand for SnapshotDiff {
 /// Tick system added to Update by `ExtensionLoaderPlugin`. Re-runs the
 /// active modal operator's invoke system each frame; exits modal on
 /// `Finished` (committing) or `Cancelled` (discarding).
-pub(crate) fn tick_modal_operator(world: &mut World) {
-    let Some(invoke) = world.resource::<ActiveModalOperator>().invoke_system else {
+pub(crate) fn tick_modal_operator(
+    world: &mut World,
+    active: &mut SystemState<Option<Single<&OperatorEntity>>>,
+) {
+    let Some(invoke) = active.get(world) else {
         return;
     };
-    let result = match world.run_system_with(invoke, default()) {
+    let result = match world.run_system_with(invoke.invoke, default()) {
         Ok(r) => r,
         Err(err) => {
             error!("Modal operator's invoke system failed: {err:?}; cancelling");
-            finalize_modal(world, false);
+            if let Err(err) = world.run_system_cached_with(finalize_modal, false) {
+                error!("Failed to finalize modal operator: {err:?}");
+            }
             return;
         }
     };
     match result {
         OperatorResult::Running => {}
-        OperatorResult::Finished => finalize_modal(world, true),
-        OperatorResult::Cancelled => finalize_modal(world, false),
+        OperatorResult::Finished => {
+            if let Err(err) = world.run_system_cached_with(finalize_modal, true) {
+                error!("Failed to finalize modal operator: {err:?}");
+            }
+        }
+        OperatorResult::Cancelled => {
+            if let Err(err) = world.run_system_cached_with(finalize_modal, false) {
+                error!("Failed to finalize modal operator: {err:?}");
+            }
+        }
     }
 }
 
 /// Exit modal mode. Commits the before-snapshot diff as a history entry
 /// if `commit`, otherwise discards it.
-fn finalize_modal(world: &mut World, commit: bool) {
-    let (label, before) = {
-        let mut active = world.resource_mut::<ActiveModalOperator>();
-        let label = active.label.take().unwrap_or_default();
-        let before = active.before_snapshot.take();
-        active.id = None;
-        active.operator_entity = None;
-        active.invoke_system = None;
-        (label, before)
+fn finalize_modal(
+    In(commit): In<bool>,
+    world: &mut World,
+    active: &mut SystemState<Option<Single<(Entity, &OperatorEntity), With<ActiveModalOperator>>>>,
+) {
+    let Some((entity, op)) = active
+        .get(world)
+        .map(|t| t.into_inner())
+        .map(|(e, o)| (e, o.clone()))
+    else {
+        return;
     };
-    if commit {
-        finalize(world, &label, before);
+    let Some(snapshot) = world.entity_mut(entity).take::<ActiveModalOperator>() else {
+        return;
+    };
+    if !commit {
+        return;
+    }
+    if let Err(err) = world.run_system_cached_with(finalize, (op.label, snapshot.before_snapshot)) {
+        error!("Failed to finalize modal operator {}: {err:?}", op.label);
     }
 }

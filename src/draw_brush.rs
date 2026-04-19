@@ -21,6 +21,8 @@ use bevy::{
     prelude::*,
     ui::UiGlobalTransform,
 };
+use bevy_enhanced_input::prelude::Press;
+use jackdaw_api::lifecycle::ActiveModalOperator;
 use jackdaw_geometry::{
     brush_planes_to_world, brushes_intersect, clean_degenerate_faces, compute_brush_geometry,
     compute_face_tangent_axes, compute_face_uvs, intersect_brushes, subtract_brush,
@@ -32,7 +34,7 @@ pub(crate) fn add_to_extension(ctx: &mut ExtensionContext) {
     ctx.entity_mut()
         .with_related::<ActionOf<CoreExtensionInputContext>>((
             Action::<DrawBrush>::new(),
-            bindings![MouseButton::Left],
+            bindings![(MouseButton::Left, Press::default())],
         ));
     ctx.register_operator::<ActivateDrawBrushModalOp>()
         .register_operator::<AddBrushOp>()
@@ -56,7 +58,51 @@ fn on_draw_brush(_: On<Fire<DrawBrush>>, state: ResMut<DrawBrushState>) {
 struct DrawBrush;
 
 #[operator(id = "viewport.draw_brush_modal", modal = true)]
-pub fn activate_draw_brush_modal(_: In<OperatorParameters>) -> OperatorResult {
+pub fn activate_draw_brush_modal(
+    _: In<OperatorParameters>,
+    mut input_focus: ResMut<InputFocus>,
+    mut draw_state: ResMut<DrawBrushState>,
+    mut edit_mode: ResMut<crate::brush::EditMode>,
+    mut brush_selection: ResMut<crate::brush::BrushSelection>,
+    modal: Option<Single<Entity, With<ActiveModalOperator>>>,
+) -> OperatorResult {
+    if modal.is_none() {
+        let mode = DrawMode::Add;
+        input_focus.0 = None;
+
+        // Exit brush edit mode if active
+        if *edit_mode != crate::brush::EditMode::Object {
+            *edit_mode = crate::brush::EditMode::Object;
+            brush_selection.entity = None;
+            brush_selection.faces.clear();
+            brush_selection.vertices.clear();
+            brush_selection.edges.clear();
+        }
+
+        draw_state.active = Some(ActiveDraw {
+            corner1: Vec3::ZERO,
+            corner2: Vec3::ZERO,
+            depth: 0.0,
+            phase: DrawPhase::PlacingFirstCorner,
+            mode,
+            plane: DrawPlane {
+                origin: Vec3::ZERO,
+                normal: Vec3::Y,
+                axis_u: Vec3::X,
+                axis_v: Vec3::Z,
+            },
+            extrude_start_cursor: Vec2::ZERO,
+            plane_locked: false,
+            cursor_on_plane: None,
+            append_target: None,
+            drag_footprint: false,
+            press_screen_pos: None,
+            polygon_vertices: Vec::new(),
+            polygon_cursor: None,
+            diagonal_snap: false,
+            cached_face_hit: None,
+        });
+    }
     OperatorResult::Running
 }
 

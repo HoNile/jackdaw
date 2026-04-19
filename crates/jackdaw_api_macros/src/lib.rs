@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::{
-    Expr, ExprLit, ExprPath, ItemFn, Lit, LitBool, LitStr, MetaNameValue, Path, Token,
+    Expr, ExprLit, ExprPath, ItemFn, Lit, LitBool, LitStr, MetaNameValue, Path, Token, Visibility,
     parse_macro_input, punctuated::Punctuated, spanned::Spanned,
 };
 
@@ -54,7 +54,7 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(
         attr with Punctuated::<MetaNameValue, Token![,]>::parse_terminated
     );
-    let item_fn = parse_macro_input!(item as ItemFn);
+    let mut item_fn = parse_macro_input!(item as ItemFn);
 
     let mut id: Option<Expr> = None;
     let mut label: Option<Expr> = None;
@@ -63,6 +63,7 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut manual: bool = false;
     let mut name_override: Option<String> = None;
     let mut is_available: Option<Path> = None;
+    let mut cancel: Option<Path> = None;
 
     for arg in args {
         let Some(key) = arg.path.get_ident().map(|i| i.to_string()) else {
@@ -111,6 +112,18 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
                     .into();
                 }
             }
+            "cancel" => {
+                if let Some(p) = as_path(&arg.value) {
+                    cancel = Some(p);
+                } else {
+                    return syn::Error::new(
+                        arg.value.span(),
+                        "`cancel` must be the path of a Bevy system",
+                    )
+                    .into_compile_error()
+                    .into();
+                }
+            }
             other => {
                 return syn::Error::new(
                     arg.path.span(),
@@ -140,13 +153,24 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
         Some(n) => format_ident!("{}", n),
         None => format_ident!("{}Op", to_pascal_case(&fn_name.to_string())),
     };
-    let vis = &item_fn.vis;
+    let vis = item_fn.vis.clone();
+    item_fn.vis = Visibility::Inherited;
 
     let availability_impl = is_available.map(|path| {
         quote! {
             fn register_availability_check(
                 commands: &mut ::bevy::ecs::system::Commands,
             ) -> ::core::option::Option<::bevy::ecs::system::SystemId<(), bool>> {
+                ::core::option::Option::Some(commands.register_system(#path))
+            }
+        }
+    });
+
+    let cancel_impl = cancel.map(|path| {
+        quote! {
+            fn register_cancel(
+                commands: &mut ::bevy::ecs::system::Commands,
+            ) -> ::core::option::Option<::bevy::ecs::system::SystemId<()>> {
                 ::core::option::Option::Some(commands.register_system(#path))
             }
         }
@@ -171,6 +195,8 @@ pub fn operator(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             #availability_impl
+
+            #cancel_impl
         }
 
         #item_fn
