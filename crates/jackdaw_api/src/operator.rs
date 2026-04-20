@@ -295,12 +295,6 @@ fn dispatch_operator(
     info!("OPERATOR: {id}");
     let params = params.into();
 
-    if let Some(active) = active.get(world)
-        && active.id != id.as_ref()
-    {
-        return Err(CallOperatorError::ModalAlreadyActive(active.id));
-    }
-
     let Some(op_entity) = world
         .resource::<OperatorIndex>()
         .by_id
@@ -312,6 +306,13 @@ fn dispatch_operator(
     let Some(op) = world.get::<OperatorEntity>(op_entity).cloned() else {
         return Err(CallOperatorError::UnknownId(id));
     };
+
+    if op.modal
+        && let Some(active) = active.get(world)
+        && active.id != id.as_ref()
+    {
+        return Err(CallOperatorError::ModalAlreadyActive(active.id));
+    }
 
     if let Some(check) = op.availability_check {
         let available = world
