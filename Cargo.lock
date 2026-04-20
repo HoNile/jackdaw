@@ -4470,6 +4470,7 @@ dependencies = [
  "bevy_rerecast",
  "bevy_simple_subsecond_system",
  "bincode",
+ "ctrlc",
  "dirs",
  "ehttp",
  "jackdaw_animation",

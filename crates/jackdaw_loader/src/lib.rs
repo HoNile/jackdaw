@@ -78,6 +78,14 @@ pub const DEFAULT_EXTENSIONS_SUBDIR: &str = "jackdaw/extensions";
 /// can manage each category independently.
 pub const DEFAULT_GAMES_SUBDIR: &str = "jackdaw/games";
 
+/// Prefix used by the install flow's atomic-rename tempfile. The
+/// extension/games watcher skips paths starting with this prefix so
+/// our own in-flight renames don't trip "Dylib changed on disk"
+/// warnings. Shared here rather than duplicated in
+/// `extensions_dialog::install_picked_file` + `extension_watcher`
+/// so the two can't drift.
+pub const INSTALL_TEMPFILE_PREFIX: &str = ".jackdaw-install-";
+
 /// Environment variable whose value, if set to a directory path,
 /// is added to the loader's search paths at startup for extensions.
 pub const ENV_EXTENSIONS_PATH: &str = "JACKDAW_EXTENSIONS_DIR";
@@ -375,7 +383,7 @@ fn open_and_verify(path: &Path) -> Result<OpenedDylib, LoadError> {
 }
 
 fn try_load(app: &mut App, path: &Path) -> Result<LoadedKind, LoadError> {
-    match open_and_verify(path)? {
+    let result = match open_and_verify(path)? {
         OpenedDylib::Extension { lib, name, ctor } => {
             jackdaw_api::register_extension(app, &name, move || {
                 // SAFETY: the dylib stays loaded because its
@@ -428,7 +436,15 @@ fn try_load(app: &mut App, path: &Path) -> Result<LoadedKind, LoadError> {
 
             Ok(LoadedKind::Game(name))
         }
-    }
+    };
+
+    // Whether we loaded an extension or a game (or not),
+    // sweep the inventory for any new `#[derive(Reflect)]` types
+    // introduced by this dylib and register them in AppTypeRegistry
+    // so the inspector / remote / scene (de)serialiser see them.
+    register_derived_reflect_types(app.world_mut());
+
+    result
 }
 
 /// Load a dylib at runtime from a `&mut World` context.
@@ -458,9 +474,24 @@ fn try_load(app: &mut App, path: &Path) -> Result<LoadedKind, LoadError> {
 pub fn load_from_path(world: &mut World, path: &Path) -> Result<LoadedKind, LoadError> {
     match open_and_verify(path)? {
         OpenedDylib::Extension { lib, name, ctor } => {
-            // Read the extension's declared kind from a throwaway
-            // instance so the catalog can classify it in the
-            // Extensions dialog.
+            // Already-registered extensions come through the same
+            // code path when the user re-installs a rebuild. Don't
+            // double-register — registering the same extension twice
+            // produces duplicate windows/operators and a phantom
+            // second catalog entry.
+            if world
+                .resource::<jackdaw_api::ExtensionCatalog>()
+                .contains(&name)
+            {
+                info!(
+                    "Extension `{name}` already registered; keeping the new library handle \
+                     alive but skipping re-registration."
+                );
+                world.resource_mut::<LoadedDylibs>().libs.push(lib);
+                register_derived_reflect_types(world);
+                return Ok(LoadedKind::Extension(name));
+            }
+
             let sample = unsafe { ctor() };
             let kind = sample.kind();
             drop(sample);
@@ -469,15 +500,11 @@ pub fn load_from_path(world: &mut World, path: &Path) -> Result<LoadedKind, Load
                 .resource_mut::<jackdaw_api::ExtensionCatalog>()
                 .register(&name, kind, move || unsafe { ctor() });
 
-            // Spawn the extension entity and run its `register()`
-            // body so windows/operators/menu entries activate
-            // immediately. BEI context registration is
-            // intentionally skipped here — it needs `&mut App`
-            // which we don't have from a world-only call site.
             let extension = unsafe { ctor() };
             jackdaw_api::load_static_extension(world, extension);
 
             world.resource_mut::<LoadedDylibs>().libs.push(lib);
+            register_derived_reflect_types(world);
 
             Ok(LoadedKind::Extension(name))
         }
@@ -486,18 +513,49 @@ pub fn load_from_path(world: &mut World, path: &Path) -> Result<LoadedKind, Load
             name,
             build: _,
         } => {
-            // Games need `&mut App` at load time to install their
-            // systems, which isn't available from a world-only
-            // context. Keep the library alive and record the name
-            // so a follow-up v2 can wake the game up, but for now
-            // tell the user to restart.
+            // If this game was already loaded at startup, skip the
+            // runtime bookkeeping entirely. Re-pushing to
+            // GameCatalog + LoadedDylibs would produce duplicate
+            // entries, and the restart-to-activate path in the
+            // launcher is what actually picks up new code anyway.
+            let already_loaded = world
+                .resource::<GameCatalog>()
+                .games
+                .iter()
+                .any(|n| n == &name);
+            if already_loaded {
+                info!(
+                    "Game `{name}` already loaded in this process; skipping runtime \
+                     re-registration. The installed file on disk is the new build; a \
+                     jackdaw restart will pick it up."
+                );
+                // Drop the extra library handle — it's a second
+                // dlopen of the same file, and the startup-loaded
+                // one keeps the in-memory code alive.
+                drop(lib);
+                return Ok(LoadedKind::Game(name));
+            }
+
             world.resource_mut::<LoadedDylibs>().libs.push(lib);
             world.resource_mut::<GameCatalog>().games.push(name.clone());
+            register_derived_reflect_types(world);
             warn!(
                 "Game dylib `{name}` cannot be activated at runtime (requires startup \
                  context). Restart jackdaw to activate it."
             );
             Ok(LoadedKind::Game(name))
         }
+    }
+}
+
+/// Sweep `inventory::iter()` into `AppTypeRegistry` so any
+/// `#[derive(Reflect)]` types newly present in the process (via a
+/// just-dlopened dylib) become visible to the inspector / remote
+/// protocol / scene (de)serialiser. Bevy only calls this once at
+/// `App::default()`, so without this follow-up call game and
+/// extension reflect types stay invisible to editor tooling.
+fn register_derived_reflect_types(world: &mut World) {
+    if let Some(registry) = world.get_resource::<bevy::ecs::reflect::AppTypeRegistry>() {
+        registry.write().register_derived_types();
     }
 }

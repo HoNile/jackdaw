@@ -6,6 +6,23 @@ use bevy::{
 use jackdaw::EditorPlugin;
 
 fn main() -> AppExit {
+    // Install a SIGINT/SIGTERM handler before anything else gets a
+    // chance to. Something in the dep tree (wgpu, gilrs, or one of
+    // their transitive deps) installs its own `ctrlc` handler that
+    // swallows the signal without propagating an exit intent — so
+    // by default Ctrl+C in the terminal is a no-op for jackdaw.
+    // Claiming the handler first with `std::process::exit(130)`
+    // guarantees Ctrl+C actually kills the process.
+    //
+    // Error ignored: if another handler has already been claimed by
+    // the time this runs, that's what bevy also reports ("Skipping
+    // installing Ctrl+C handler as one was already installed"),
+    // and we can't do anything about it from here.
+    let _ = ctrlc::set_handler(|| {
+        eprintln!("jackdaw: received Ctrl+C, exiting");
+        std::process::exit(130);
+    });
+
     let project_root = jackdaw::project::read_last_project()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 

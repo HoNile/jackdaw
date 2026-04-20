@@ -13,6 +13,10 @@
 //!   restored on Stop so the authored scene is the revert baseline.
 //! - [`PieButton`] — marker component for the toolbar transport
 //!   buttons; the `PiePlugin` auto-wires a click observer to each.
+//! - [`GameSpawned`] — marker added automatically to any entity that
+//!   receives a `Transform` during `PlayState::Playing`. Editor
+//!   surfaces (hierarchy, inspector) use it to distinguish
+//!   authored-then-played entities from ones the game spawned.
 //! - [`PiePlugin`] — registers state, resource, and observers.
 //!
 //! Handlers [`handle_play`], [`handle_pause`], [`handle_stop`] are
@@ -42,14 +46,47 @@ pub enum PieButton {
     Stop,
 }
 
+/// Marker added to any entity spawned while the editor is in
+/// [`PlayState::Playing`]. The hierarchy tints these rows a
+/// distinct colour so it's visually obvious which entities are
+/// game-owned (and therefore will disappear on Stop) versus
+/// authored.
+///
+/// Tagged automatically via the `On<Add, Transform>` observer in
+/// [`tag_game_spawned`]. Entities that spawn without a `Transform`
+/// aren't tagged; in practice this covers the 99% of game-spawned
+/// entities that have one (meshes, lights, cameras, sprites, UI).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct GameSpawned;
+
 pub struct PiePlugin;
 
 impl Plugin for PiePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<PlayState>()
             .init_resource::<PrePlayScene>()
-            .add_observer(wire_pie_button);
+            .add_observer(wire_pie_button)
+            .add_observer(tag_game_spawned);
     }
+}
+
+/// Observer: tag entities that receive a `Transform` while
+/// `PlayState::Playing` is active with [`GameSpawned`]. Fires once
+/// per entity because `On<Add, Transform>` is a one-shot event.
+fn tag_game_spawned(
+    trigger: On<Add, Transform>,
+    state: Res<State<PlayState>>,
+    already_tagged: Query<(), With<GameSpawned>>,
+    mut commands: Commands,
+) {
+    if *state.get() != PlayState::Playing {
+        return;
+    }
+    let entity = trigger.event_target();
+    if already_tagged.get(entity).is_ok() {
+        return;
+    }
+    commands.entity(entity).insert(GameSpawned);
 }
 
 /// Spawn a click observer on each `PieButton` as it's added.

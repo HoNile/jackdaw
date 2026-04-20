@@ -20,6 +20,7 @@ pub use inspector::{EditorMeta, ReflectEditorMeta};
 pub mod ext_build;
 pub mod extension_loader;
 pub mod extension_watcher;
+pub mod hot_reload;
 pub mod restart;
 pub mod sdk_paths;
 pub mod extensions_config;
@@ -304,6 +305,7 @@ impl Plugin for EditorPlugin {
             .add_plugins(extension_loader::ExtensionLoaderPlugin)
             .add_plugins(extension_watcher::ExtensionWatcherPlugin)
             .add_plugins(extensions_dialog::ExtensionsDialogPlugin)
+            .add_plugins(hot_reload::HotReloadPlugin)
             .add_plugins(pie::PiePlugin)
             .add_systems(Startup, (register_workspaces, sync_icon_font))
             .configure_sets(
@@ -1925,6 +1927,18 @@ fn populate_menu(world: &mut World) {
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
+
+    // Current hot-reload state → reflect in the menu label.
+    let hot_reload_on = world
+        .get_resource::<hot_reload::HotReloadEnabled>()
+        .map(|h| h.0)
+        .unwrap_or(false);
+    let hot_reload_label = if hot_reload_on {
+        "Hot Reload: On"
+    } else {
+        "Hot Reload: Off"
+    };
+
     jackdaw_feathers::menu_bar::populate_menu_bar(
         world,
         menu_bar_entity,
@@ -1943,6 +1957,7 @@ fn populate_menu(world: &mut World) {
                     ("file.keybinds", "Keybinds..."),
                     ("file.extensions", "Extensions..."),
                     ("---", ""),
+                    ("file.hot_reload", hot_reload_label),
                     ("file.open_recent", "Open Recent..."),
                     ("file.home", "Home"),
                 ],
@@ -2121,6 +2136,17 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
                 world
                     .resource_mut::<NextState<AppState>>()
                     .set(AppState::ProjectSelect);
+            });
+        }
+        "file.hot_reload" => {
+            commands.queue(|world: &mut World| {
+                let mut enabled = world.resource_mut::<hot_reload::HotReloadEnabled>();
+                enabled.0 = !enabled.0;
+                let state = if enabled.0 { "on" } else { "off" };
+                info!("Hot reload toggled {state}");
+                // Menu shows the current on/off state — trigger a
+                // rebuild so the label refreshes.
+                world.resource_mut::<MenuBarDirty>().0 = true;
             });
         }
         "file.open_recent" => {

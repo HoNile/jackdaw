@@ -65,13 +65,14 @@ struct ExtensionsDialogContent;
 
 /// Holds the in-flight file-picker task, if any. Populated when the
 /// user clicks the install button; drained by `poll_install_task`
-/// once the user picks (or cancels).
+/// once the user picks (or cancels). `pub` so hot-reload can surface
+/// its own status messages through the same UI slot.
 #[derive(Resource, Default)]
-struct InstallStatus {
-    task: Option<Task<Option<FileHandle>>>,
+pub struct InstallStatus {
+    pub task: Option<Task<Option<FileHandle>>>,
     /// Last user-visible message. Survives dialog re-opens so users
     /// can click around and come back to the success/failure line.
-    message: Option<String>,
+    pub message: Option<String>,
 }
 
 pub fn open_extensions_dialog(world: &mut World) {
@@ -444,9 +445,21 @@ enum InstallTarget {
     Game,
 }
 
-/// Copy the picked file into the correct per-user subdirectory based
-/// on the dylib's entry symbol. Returns the destination path on
-/// success. Creates the directory if missing.
+/// Install a built dylib into the per-user subdirectory for its
+/// kind. Returns the destination path on success. Creates the
+/// directory if missing.
+///
+/// Uses write-to-tempfile + rename instead of `std::fs::copy` so we
+/// never truncate a file that's currently mmapped by the running
+/// process. Truncating a live-mapped `.so` corrupts its pages in
+/// place and segfaults the editor the next time anything touches
+/// the loaded library's code or static data (including `dlopen`
+/// walking `/proc/self/maps`).
+///
+/// `rename` is atomic on the same filesystem and leaves the old
+/// inode intact for any existing mmap — the old library stays
+/// valid until its handle is dropped; new dlopens see the new
+/// inode.
 fn install_picked_file(
     src: &std::path::Path,
     target: InstallTarget,
@@ -469,8 +482,27 @@ fn install_picked_file(
         )
     })?;
     let dest = dest_dir.join(file_name);
-    std::fs::copy(src, &dest)?;
-    Ok(dest)
+
+    // Write to a sibling temp path, then atomic-rename. A unique
+    // suffix keeps concurrent installs from clobbering each other's
+    // temp file. The prefix is shared with the extension watcher
+    // so the watcher ignores our in-flight rename.
+    let temp_name = format!(
+        "{}{}-{}",
+        jackdaw_loader::INSTALL_TEMPFILE_PREFIX,
+        std::process::id(),
+        file_name.to_string_lossy()
+    );
+    let temp = dest_dir.join(temp_name);
+    std::fs::copy(src, &temp)?;
+    match std::fs::rename(&temp, &dest) {
+        Ok(()) => Ok(dest),
+        Err(e) => {
+            // Best-effort cleanup so we don't leave turds around.
+            let _ = std::fs::remove_file(&temp);
+            Err(e)
+        }
+    }
 }
 
 /// Peek at the dylib's entry symbol to decide whether it belongs in

@@ -69,6 +69,7 @@ dirs.workspace = true
 regex.workspace = true
 pathdiff.workspace = true
 notify = "8"
+ctrlc = "3"
 bevy_simple_subsecond_system = { version = "0.2", optional = true }
 
 [workspace.dependencies]

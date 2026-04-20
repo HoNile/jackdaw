@@ -122,6 +122,17 @@ fn collect_search_paths() -> Vec<PathBuf> {
 }
 
 fn is_dylib(path: &Path) -> bool {
+    // Skip our own atomic-rename tempfiles — the install flow writes
+    // to `<subdir>/.jackdaw-install-<pid>-<name>.so` and then renames
+    // into place, and we don't want those intermediate writes to
+    // fire the user-facing "Dylib changed on disk" warning.
+    if path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| name.starts_with(jackdaw_loader::INSTALL_TEMPFILE_PREFIX))
+    {
+        return false;
+    }
     path.extension()
         .and_then(|s| s.to_str())
         .is_some_and(|ext| matches!(ext, "so" | "dylib" | "dll"))

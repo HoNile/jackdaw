@@ -13,20 +13,20 @@
 //! binaries available!"). Scaffolded jackdaw projects are cdylibs
 //! so the editor can `dlopen` them, so `bevy build` can't drive
 //! them. We still use `bevy new` for scaffolding — that part of
-//! the toolchain fits cleanly. If bevy CLI later grows library
-//! support we'll switch the build path too.
+//! the toolchain fits cleanly.
 //!
-//! [`build_extension_project`] is the entry point. Call it from the
-//! Extensions dialog's "Build and Install…" button, from the
-//! scaffold-new-project flow after `bevy new` completes, or from
-//! the `--build-ext <path>` CLI flag when it's wired up.
-//!
-//! The function blocks until the subprocess exits; do not call it
-//! from a Bevy system. Use a task pool if you need non-blocking
-//! builds.
+//! [`build_extension_project`] is the simple entry point.
+//! [`build_extension_project_with_progress`] additionally streams
+//! per-crate progress + tailing log lines into a shared sink the
+//! UI can read each frame. The function blocks until cargo exits;
+//! use an `AsyncComputeTaskPool` task for non-blocking builds.
 
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 use crate::sdk_paths::SdkPaths;
 
@@ -47,8 +47,7 @@ pub enum BuildError {
     BuildSpawn(std::io::Error),
     BuildFailed {
         status: std::process::ExitStatus,
-        stdout: String,
-        stderr: String,
+        stderr_tail: String,
     },
     OutputNotProduced {
         expected: PathBuf,
@@ -81,8 +80,11 @@ impl std::fmt::Display for BuildError {
                 hint
             ),
             Self::BuildSpawn(e) => write!(f, "failed to spawn cargo: {e}"),
-            Self::BuildFailed { status, stderr, .. } => {
-                write!(f, "cargo exited with {status}\n{stderr}")
+            Self::BuildFailed {
+                status,
+                stderr_tail,
+            } => {
+                write!(f, "cargo exited with {status}\n{stderr_tail}")
             }
             Self::OutputNotProduced { expected } => write!(
                 f,
@@ -94,6 +96,49 @@ impl std::fmt::Display for BuildError {
 }
 
 impl std::error::Error for BuildError {}
+
+/// Capacity of the rolling log-tail buffer surfaced in progress UI.
+const LOG_TAIL_CAPACITY: usize = 20;
+
+/// Live progress from a running cargo build. Writers: the build
+/// helper's stdout/stderr reader threads. Reader: the UI poller
+/// that renders the progress bar + log tail each frame. Wrap in
+/// `Arc<Mutex<_>>` when handing to a long-running task.
+///
+/// `artifacts_total` is `Some` once we've run `cargo metadata` to
+/// compute the expected number of compile units; until then the UI
+/// should render an indeterminate bar (or just the counter).
+#[derive(Debug, Default, Clone)]
+pub struct BuildProgress {
+    pub current_crate: Option<String>,
+    pub artifacts_done: u32,
+    pub artifacts_total: Option<u32>,
+    pub recent_log_lines: VecDeque<String>,
+    /// Set to `true` by the helper once cargo exits (success or
+    /// failure). The UI can use this to flip the bar to 100%.
+    pub finished: bool,
+}
+
+impl BuildProgress {
+    pub fn push_log(&mut self, line: String) {
+        if self.recent_log_lines.len() >= LOG_TAIL_CAPACITY {
+            self.recent_log_lines.pop_front();
+        }
+        self.recent_log_lines.push_back(line);
+    }
+
+    /// 0.0 when unknown, 1.0 when done.
+    pub fn fraction(&self) -> Option<f32> {
+        if self.finished {
+            return Some(1.0);
+        }
+        let total = self.artifacts_total? as f32;
+        if total <= 0.0 {
+            return None;
+        }
+        Some((self.artifacts_done as f32 / total).clamp(0.0, 1.0))
+    }
+}
 
 /// Discover `libjackdaw_sdk` + `jackdaw-rustc-wrapper` on disk, or
 /// surface a typed error the Build-and-Install dialog can translate
@@ -120,15 +165,24 @@ fn discover_sdk() -> Result<SdkPaths, BuildError> {
 
 /// Build the extension or game project rooted at `project_dir`.
 ///
-/// The project is expected to be a single-crate cargo project with
-/// its own `[workspace]` marker, `crate-type = ["cdylib"]` on the
-/// library, and `bevy = "0.18"` declared under `[dependencies]`. No
-/// `[patch.crates-io]` is required — the wrapper redirects the
-/// `--extern bevy=` flag regardless of what cargo resolves bevy to.
-///
-/// Returns the absolute path to the produced `.so` / `.dylib` /
-/// `.dll` on success.
+/// Convenience wrapper around
+/// [`build_extension_project_with_progress`] that ignores progress.
 pub fn build_extension_project(project_dir: &Path) -> Result<PathBuf, BuildError> {
+    build_extension_project_with_progress(project_dir, None)
+}
+
+/// Build the project and (optionally) stream progress into `sink`.
+///
+/// While cargo runs, a reader thread parses its stdout (JSON
+/// records from `--message-format=json-render-diagnostics`) and
+/// updates `sink.artifacts_done` + `sink.current_crate` on each
+/// `compiler-artifact` message. A separate thread tails stderr
+/// (which carries `json-render-diagnostics`' human-readable lines)
+/// into `sink.recent_log_lines`.
+pub fn build_extension_project_with_progress(
+    project_dir: &Path,
+    sink: Option<Arc<Mutex<BuildProgress>>>,
+) -> Result<PathBuf, BuildError> {
     let project_dir = project_dir
         .canonicalize()
         .map_err(|_| BuildError::NotADirectory(project_dir.to_path_buf()))?;
@@ -143,6 +197,18 @@ pub fn build_extension_project(project_dir: &Path) -> Result<PathBuf, BuildError
 
     let sdk = discover_sdk()?;
 
+    // Best-effort: probe the expected artifact count via cargo
+    // metadata before kicking off the real build. Runs in the
+    // current thread because it's usually <1s and we want the
+    // total to be present by the first frame the UI polls.
+    if let Some(ref s) = sink {
+        if let Some(total) = estimate_total_artifacts(&project_dir) {
+            if let Ok(mut g) = s.lock() {
+                g.artifacts_total = Some(total);
+            }
+        }
+    }
+
     let mut cmd = Command::new("cargo");
     cmd.current_dir(&project_dir);
     cmd.args([
@@ -151,20 +217,69 @@ pub fn build_extension_project(project_dir: &Path) -> Result<PathBuf, BuildError
         manifest
             .to_str()
             .expect("Cargo.toml path must be valid UTF-8"),
+        "--message-format=json-render-diagnostics",
     ]);
-    // The wrapper reads these to redirect --extern bevy / inject
-    // --extern jackdaw_api. bevy CLI passes env through to cargo,
-    // which passes it through to every rustc invocation.
     cmd.env("RUSTC_WRAPPER", &sdk.wrapper);
     cmd.env("JACKDAW_SDK_DYLIB", &sdk.dylib);
     cmd.env("JACKDAW_SDK_DEPS", &sdk.deps);
 
-    let output = cmd.output().map_err(BuildError::BuildSpawn)?;
-    if !output.status.success() {
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(BuildError::BuildSpawn)?;
+
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+
+    let stdout_sink = sink.clone();
+    let stdout_handle = thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            parse_json_line(&line, stdout_sink.as_ref());
+        }
+    });
+
+    let stderr_sink = sink.clone();
+    let stderr_tail: Arc<Mutex<VecDeque<String>>> =
+        Arc::new(Mutex::new(VecDeque::with_capacity(LOG_TAIL_CAPACITY)));
+    let stderr_tail_for_thread = Arc::clone(&stderr_tail);
+    let stderr_handle = thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            if let Some(ref s) = stderr_sink {
+                if let Ok(mut g) = s.lock() {
+                    g.push_log(line.clone());
+                }
+            }
+            if let Ok(mut tail) = stderr_tail_for_thread.lock() {
+                if tail.len() >= LOG_TAIL_CAPACITY {
+                    tail.pop_front();
+                }
+                tail.push_back(line);
+            }
+        }
+    });
+
+    let status = child
+        .wait()
+        .map_err(|e| BuildError::BuildSpawn(e))?;
+    let _ = stdout_handle.join();
+    let _ = stderr_handle.join();
+
+    if let Some(ref s) = sink {
+        if let Ok(mut g) = s.lock() {
+            g.finished = true;
+        }
+    }
+
+    if !status.success() {
+        let tail = stderr_tail
+            .lock()
+            .map(|t| t.iter().cloned().collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default();
         return Err(BuildError::BuildFailed {
-            status: output.status,
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            status,
+            stderr_tail: tail,
         });
     }
 
@@ -174,6 +289,72 @@ pub fn build_extension_project(project_dir: &Path) -> Result<PathBuf, BuildError
         return Err(BuildError::OutputNotProduced { expected: artifact });
     }
     Ok(artifact)
+}
+
+/// Parse a single line from `cargo --message-format=json-…`. On a
+/// `compiler-artifact` record, bump `artifacts_done` + update
+/// `current_crate`. Errors are swallowed — cargo sometimes emits
+/// non-JSON prefix lines, which we ignore.
+fn parse_json_line(line: &str, sink: Option<&Arc<Mutex<BuildProgress>>>) {
+    let Some(sink) = sink else { return };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    let reason = value.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+    if reason == "compiler-artifact" {
+        let name = value
+            .get("target")
+            .and_then(|t| t.get("name"))
+            .and_then(|n| n.as_str())
+            .map(|s| s.to_string());
+        if let Ok(mut g) = sink.lock() {
+            g.artifacts_done = g.artifacts_done.saturating_add(1);
+            if let Some(n) = name {
+                g.current_crate = Some(n);
+            }
+        }
+    } else if reason == "compiler-message" {
+        // Human-readable rendered text for warnings/errors comes in
+        // the `message.rendered` field. Forward those lines into the
+        // tail buffer alongside stderr's rendered output.
+        if let Some(rendered) = value
+            .get("message")
+            .and_then(|m| m.get("rendered"))
+            .and_then(|r| r.as_str())
+        {
+            if let Ok(mut g) = sink.lock() {
+                for l in rendered.lines().take(LOG_TAIL_CAPACITY) {
+                    g.push_log(l.to_string());
+                }
+            }
+        }
+    }
+}
+
+/// Run `cargo metadata` to count the packages in the resolve set.
+/// Returns `None` on any failure — the progress UI will render an
+/// indeterminate bar instead.
+///
+/// On a fresh bevy project the first `cargo metadata` call takes a
+/// few seconds (it resolves the dep graph and hits the registry).
+/// Subsequent calls use cargo's cache and finish in <200 ms. The
+/// caller runs this on the main thread before spawning the real
+/// build, so the progress bar can render a denominator from the
+/// first frame onward.
+fn estimate_total_artifacts(project_dir: &Path) -> Option<u32> {
+    let output = Command::new("cargo")
+        .current_dir(project_dir)
+        .args(["metadata", "--format-version=1"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let packages = value.get("packages")?.as_array()?;
+    // Each package produces roughly one artifact; build scripts and
+    // proc-macros add a few more. Close enough for a progress bar.
+    Some(packages.len() as u32)
 }
 
 /// Derive the expected cdylib filename from the project's package

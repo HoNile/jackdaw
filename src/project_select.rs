@@ -27,7 +27,12 @@ impl Plugin for ProjectSelectPlugin {
             .add_systems(OnEnter(AppState::ProjectSelect), spawn_project_selector)
             .add_systems(
                 Update,
-                (poll_folder_dialog, poll_new_project_tasks)
+                (
+                    poll_folder_dialog,
+                    poll_new_project_tasks,
+                    refresh_build_progress_snapshot,
+                    refresh_build_progress_ui,
+                )
                     .run_if(in_state(AppState::ProjectSelect)),
             );
     }
@@ -75,6 +80,26 @@ struct NewProjectLocationText;
 #[derive(Component)]
 struct NewProjectStatusText;
 
+/// Outer container for the progress-bar + log-tail UI, toggled on
+/// when a build is in flight so the idle modal doesn't leave a
+/// visual gap.
+#[derive(Component)]
+struct NewProjectProgressContainer;
+
+/// Wraps the "currently compiling <crate>" label.
+#[derive(Component)]
+struct NewProjectProgressCrateLabel;
+
+/// Wraps the `progress_bar` widget so the refresh system can walk
+/// its fill child.
+#[derive(Component)]
+struct NewProjectProgressBarSlot;
+
+/// Wraps the log-tail text; refreshed with the last 20 lines of
+/// cargo output each frame.
+#[derive(Component)]
+struct NewProjectLogText;
+
 #[derive(Component)]
 struct NewProjectCancelButton;
 
@@ -101,6 +126,14 @@ struct NewProjectState {
     /// after the scaffold task succeeds so the user lands in the
     /// editor with the game/extension dylib already installed.
     build_task: Option<Task<Result<PathBuf, crate::ext_build::BuildError>>>,
+    /// Shared progress sink the build task writes to. The
+    /// `refresh_build_progress_ui` system reads a snapshot from
+    /// here each frame and copies it into `build_progress_snapshot`
+    /// so the modal's bar/log nodes can update without locking on
+    /// the hot path.
+    build_progress: Option<std::sync::Arc<std::sync::Mutex<crate::ext_build::BuildProgress>>>,
+    /// Latest snapshot of `build_progress`, copied each frame.
+    build_progress_snapshot: Option<crate::ext_build::BuildProgress>,
     /// Path to the freshly-scaffolded project, kept around so the
     /// build-completion handler can transition into the editor
     /// pointing at the right root.
@@ -522,17 +555,25 @@ pub fn enter_project_with(world: &mut World, root: PathBuf, skip_build: bool) {
         .and_then(|s| s.to_str())
         .unwrap_or("project")
         .to_owned();
+    let progress = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::ext_build::BuildProgress::default(),
+    ));
     {
         let mut state = world.resource_mut::<NewProjectState>();
         state.pending_project = Some(root.clone());
-        state.status = Some(format!(
-            "Building `{project_name}` (first build compiles bevy — a few minutes)…"
-        ));
+        state.status = Some(format!("Building `{project_name}`…"));
+        state.build_progress = Some(std::sync::Arc::clone(&progress));
+        state.build_progress_snapshot = Some(crate::ext_build::BuildProgress::default());
     }
 
     let root_for_task = root;
-    let task = AsyncComputeTaskPool::get()
-        .spawn(async move { crate::ext_build::build_extension_project(&root_for_task) });
+    let progress_for_task = std::sync::Arc::clone(&progress);
+    let task = AsyncComputeTaskPool::get().spawn(async move {
+        crate::ext_build::build_extension_project_with_progress(
+            &root_for_task,
+            Some(progress_for_task),
+        )
+    });
     world.resource_mut::<NewProjectState>().build_task = Some(task);
 }
 
@@ -833,6 +874,70 @@ pub fn open_new_project_modal(world: &mut World, preset: TemplatePreset) {
         ChildOf(card),
     ));
 
+    // Build-progress UI (hidden until a build is in flight).
+    let progress_container = world
+        .spawn((
+            NewProjectProgressContainer,
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
+                margin: UiRect::top(Val::Px(8.0)),
+                display: Display::None,
+                ..Default::default()
+            },
+            ChildOf(card),
+        ))
+        .id();
+
+    // "Compiling <crate>" label.
+    world.spawn((
+        NewProjectProgressCrateLabel,
+        Text::new(String::new()),
+        TextFont {
+            font: editor_font.clone(),
+            font_size: tokens::FONT_SM,
+            ..Default::default()
+        },
+        TextColor(tokens::TEXT_SECONDARY),
+        ChildOf(progress_container),
+    ));
+
+    // Progress bar slot wrapping the `progress_bar` widget.
+    let bar_slot = world
+        .spawn((
+            NewProjectProgressBarSlot,
+            Node {
+                width: Val::Percent(100.0),
+                ..Default::default()
+            },
+            ChildOf(progress_container),
+        ))
+        .id();
+    world.spawn((
+        jackdaw_feathers::progress::progress_bar(0.0),
+        ChildOf(bar_slot),
+    ));
+
+    // Log tail — fixed-height scrollable-ish (we don't enable real
+    // scrolling; text wraps naturally and oldest lines age out via
+    // the 20-line ring buffer).
+    world.spawn((
+        NewProjectLogText,
+        Text::new(String::new()),
+        TextFont {
+            font: editor_font.clone(),
+            font_size: tokens::FONT_SM,
+            ..Default::default()
+        },
+        TextColor(tokens::TEXT_SECONDARY),
+        Node {
+            max_height: Val::Px(220.0),
+            overflow: Overflow::clip(),
+            ..Default::default()
+        },
+        ChildOf(progress_container),
+    ));
+
     // Action buttons
     let actions = world
         .spawn((
@@ -1002,19 +1107,31 @@ fn poll_new_project_tasks(
             match result {
                 Ok(project_path) => {
                     info!("Scaffolded project at {}", project_path.display());
-                    // Immediately chain the first build so the user
-                    // lands in the editor with the dylib installed.
-                    // The first build compiles all of bevy and takes
-                    // a couple of minutes — surface that in the
-                    // status message so it doesn't look hung.
-                    state.status = Some(
-                        "Compiling initial build (first build compiles bevy — a few minutes)…"
-                            .to_string(),
-                    );
+                    // Chain the first build with live progress
+                    // surfacing. The scaffold modal is already open
+                    // and will render the bar + log tail each frame.
+                    let project_name = project_path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("project")
+                        .to_owned();
+                    state.status = Some(format!("Building `{project_name}`…"));
                     state.pending_project = Some(project_path.clone());
+
+                    let progress = std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::ext_build::BuildProgress::default(),
+                    ));
+                    state.build_progress = Some(std::sync::Arc::clone(&progress));
+                    state.build_progress_snapshot =
+                        Some(crate::ext_build::BuildProgress::default());
+
                     let project_for_task = project_path;
+                    let progress_for_task = std::sync::Arc::clone(&progress);
                     state.build_task = Some(AsyncComputeTaskPool::get().spawn(async move {
-                        crate::ext_build::build_extension_project(&project_for_task)
+                        crate::ext_build::build_extension_project_with_progress(
+                            &project_for_task,
+                            Some(progress_for_task),
+                        )
                     }));
                 }
                 Err(err) => {
@@ -1080,6 +1197,115 @@ fn poll_new_project_tasks(
     for mut text in status_texts.iter_mut() {
         if text.0 != desired_status {
             text.0 = desired_status.clone();
+        }
+    }
+}
+
+/// Copy the shared `BuildProgress` into the per-frame snapshot so
+/// the UI-refresh system can read from a plain struct without
+/// holding the mutex across rendering.
+fn refresh_build_progress_snapshot(mut state: ResMut<NewProjectState>) {
+    let Some(ref arc) = state.build_progress else {
+        return;
+    };
+    let snap = {
+        let Ok(guard) = arc.lock() else {
+            return;
+        };
+        guard.clone()
+    };
+    state.build_progress_snapshot = Some(snap);
+}
+
+/// Reflect the current snapshot into the modal's progress UI:
+/// toggles the container, updates the "compiling <crate>" label,
+/// scrubs the progress-bar fill, and sets the log-tail text.
+fn refresh_build_progress_ui(
+    state: Res<NewProjectState>,
+    mut containers: Query<&mut Node, With<NewProjectProgressContainer>>,
+    mut crate_labels: Query<
+        &mut Text,
+        (
+            With<NewProjectProgressCrateLabel>,
+            Without<NewProjectLogText>,
+        ),
+    >,
+    mut log_texts: Query<
+        &mut Text,
+        (
+            With<NewProjectLogText>,
+            Without<NewProjectProgressCrateLabel>,
+        ),
+    >,
+    bar_slots: Query<&Children, With<NewProjectProgressBarSlot>>,
+    children_q: Query<&Children>,
+    mut fill_q: Query<
+        &mut Node,
+        (
+            With<jackdaw_feathers::progress::ProgressBarFill>,
+            Without<NewProjectProgressContainer>,
+        ),
+    >,
+) {
+    let snapshot = state.build_progress_snapshot.as_ref();
+
+    // Toggle container visibility based on whether a build is active.
+    let show = snapshot.is_some();
+    for mut node in containers.iter_mut() {
+        let desired = if show { Display::Flex } else { Display::None };
+        if node.display != desired {
+            node.display = desired;
+        }
+    }
+
+    let Some(progress) = snapshot else {
+        return;
+    };
+
+    // "Compiling <crate>" or "Preparing…" if we don't know yet.
+    let crate_line = match (&progress.current_crate, progress.artifacts_total) {
+        (Some(name), Some(total)) => {
+            format!("Compiling {name} ({}/{})", progress.artifacts_done, total)
+        }
+        (Some(name), None) => format!("Compiling {name} ({} so far)", progress.artifacts_done),
+        (None, Some(total)) => format!("Preparing build… (0/{total})"),
+        (None, None) => "Preparing build…".to_string(),
+    };
+    for mut t in crate_labels.iter_mut() {
+        if t.0 != crate_line {
+            t.0 = crate_line.clone();
+        }
+    }
+
+    // Progress bar fill — walk slot → bar → bar children → fill.
+    let fraction = progress.fraction().unwrap_or(0.0).clamp(0.0, 1.0);
+    let desired_width = Val::Percent(fraction * 100.0);
+    for bar_children in bar_slots.iter() {
+        for bar_entity in bar_children.iter() {
+            let Ok(inner) = children_q.get(bar_entity) else {
+                continue;
+            };
+            for fill_entity in inner.iter() {
+                if let Ok(mut node) = fill_q.get_mut(fill_entity) {
+                    if node.width != desired_width {
+                        node.width = desired_width;
+                    }
+                }
+            }
+        }
+    }
+
+    // Log tail.
+    let mut joined = String::new();
+    for (i, line) in progress.recent_log_lines.iter().enumerate() {
+        if i > 0 {
+            joined.push('\n');
+        }
+        joined.push_str(line);
+    }
+    for mut t in log_texts.iter_mut() {
+        if t.0 != joined {
+            t.0 = joined.clone();
         }
     }
 }

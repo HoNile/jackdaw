@@ -7,15 +7,25 @@
 //! `&mut App` to hand the game's plugin. A full process restart is
 //! the simplest way to get there.
 //!
-//! The respawn inherits the full env (so `LD_LIBRARY_PATH` etc.
-//! survive). The current process exits with code 0 immediately after
-//! the child spawns — the user sees their window close and a fresh
-//! one appear. Because jackdaw persists "recent projects" via
-//! [`crate::project`], the new instance reopens the same project.
+//! # Why `exec` on Unix, `spawn + exit` on Windows
 //!
-//! Callers should flush any pending work (save-on-exit, close
-//! pipelines, etc.) before invoking this — once the child is
-//! spawned we don't come back.
+//! On Unix we use [`std::os::unix::process::CommandExt::exec`] so
+//! the new jackdaw takes over the current PID. This preserves:
+//!
+//! - The process-group membership (the terminal's foreground
+//!   group), so a later Ctrl+C still reaches the new instance.
+//! - `cargo run`'s wait loop (cargo is watching the original PID;
+//!   exec keeps the same PID, so cargo sees the new process as the
+//!   "still-running child" and doesn't prematurely drop back to
+//!   the shell prompt).
+//!
+//! Windows has no `exec` equivalent; we fall back to spawning a
+//! detached child and exiting. Terminal attachment there is
+//! handled via the OS's process-management UI.
+//!
+//! The respawn inherits the full env (so `LD_LIBRARY_PATH` etc.
+//! survive). Because jackdaw persists "recent projects" via
+//! [`crate::project`], the new instance reopens the same project.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -29,9 +39,9 @@ use bevy::log::{info, warn};
 /// restart → auto-open → build → restart infinite loop.
 pub const ENV_SKIP_INITIAL_BUILD: &str = "JACKDAW_SKIP_INITIAL_BUILD";
 
-/// Spawn a fresh copy of the running binary with the same command-
-/// line arguments and environment, then exit the current process.
-/// Never returns.
+/// Respawn the editor binary with the same argv and env. On Unix
+/// this uses `exec` to replace the current process image; on
+/// Windows it spawns a detached child and exits. Never returns.
 pub fn restart_jackdaw() -> ! {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -48,25 +58,45 @@ pub fn restart_jackdaw() -> ! {
         args.len()
     );
 
-    let child = Command::new(&exe)
-        .args(&args)
+    unix_exec_or_fallback(&exe, &args);
+    // Only reached on Windows / exec-unsupported platforms.
+    windows_spawn_and_exit(&exe, &args)
+}
+
+#[cfg(unix)]
+fn unix_exec_or_fallback(exe: &std::path::Path, args: &[std::ffi::OsString]) {
+    use std::os::unix::process::CommandExt;
+
+    let mut cmd = Command::new(exe);
+    cmd.args(args).env(ENV_SKIP_INITIAL_BUILD, "1");
+    // `exec` replaces the current process image. It only returns
+    // on failure (e.g., ENOENT, EACCES). On success, control never
+    // comes back here — the new image starts at `main`.
+    let err = cmd.exec();
+    warn!(
+        "restart_jackdaw: exec failed ({err}); falling back to spawn-and-exit. \
+         The child will be orphaned from the terminal."
+    );
+}
+
+#[cfg(not(unix))]
+fn unix_exec_or_fallback(_exe: &std::path::Path, _args: &[std::ffi::OsString]) {
+    // No-op on non-Unix platforms; control falls through to
+    // windows_spawn_and_exit below.
+}
+
+fn windows_spawn_and_exit(exe: &std::path::Path, args: &[std::ffi::OsString]) -> ! {
+    let child = Command::new(exe)
+        .args(args)
         .env(ENV_SKIP_INITIAL_BUILD, "1")
         .spawn();
     match child {
-        Ok(_) => {
-            // Best-effort flush. We can't hold on for graceful bevy
-            // shutdown because the new process is already coming up
-            // and will compete for the window/input device.
-            std::process::exit(0);
-        }
+        Ok(_) => std::process::exit(0),
         Err(e) => {
             warn!(
                 "restart_jackdaw: failed to spawn {} ({e}); staying in current process",
                 exe.display()
             );
-            // The caller typically can't recover from this, but we
-            // leave the decision to them by returning from `exit` —
-            // which this function never does, so log and exit(1).
             std::process::exit(1);
         }
     }
