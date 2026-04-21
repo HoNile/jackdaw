@@ -63,9 +63,23 @@ pub use compat::CompatError;
 /// this session. Populated at startup by the loader; consumed by
 /// the editor's PIE plugin to show the "game loaded" indicator
 /// and to know which game the Play button should run.
+///
+/// `entries` holds the `build`/`teardown` fn pointers per game name
+/// so the hot-reload driver can invoke them from an exclusive
+/// system without re-opening the library.
 #[derive(Resource, Default, Debug, Clone)]
 pub struct GameCatalog {
     pub games: Vec<String>,
+    pub entries: std::collections::HashMap<String, LoadedGameEntry>,
+}
+
+/// Callable pair from a loaded game dylib. Function pointers remain
+/// valid as long as the backing `libloading::Library` is held in
+/// [`LoadedDylibs`].
+#[derive(Clone, Copy, Debug)]
+pub struct LoadedGameEntry {
+    pub build: unsafe extern "C" fn(*mut bevy::ecs::world::World),
+    pub teardown: unsafe extern "C" fn(*mut bevy::ecs::world::World),
 }
 
 /// Sub-directory inside the platform config directory where the
@@ -239,6 +253,39 @@ pub enum LoadError {
     EntryPanicked,
     Compat(CompatError),
     InvalidName,
+    /// Non-dlopen failure, e.g., the install step's filesystem
+    /// rename failed. Doesn't reach the library-loader itself but
+    /// is surfaced through the same Result so call sites have a
+    /// single error type to match on.
+    InstallIo(String),
+}
+
+impl LoadError {
+    /// `true` when the underlying `libloading` failure is the tell-
+    /// tale signature of a stale cache: the dylib resolved
+    /// successfully but its reference to a jackdaw SDK symbol
+    /// couldn't be found, because the SDK was rebuilt after the
+    /// dylib was last compiled.
+    ///
+    /// Callers (project_select, hot_reload) use this to trigger
+    /// an auto-`cargo clean -p <crate>` + rebuild recovery path
+    /// transparently, so the user never has to manually nuke their
+    /// project target dir after an editor rebuild.
+    ///
+    /// Heuristic: looks for `undefined symbol` plus any jackdaw
+    /// identifier in the formatted error string. Both pieces need
+    /// to match to avoid classifying unrelated libloading failures
+    /// (missing .so, malformed binary, etc.) as cache staleness.
+    pub fn is_symbol_mismatch(&self) -> bool {
+        let Self::Libloading(e) = self else {
+            return false;
+        };
+        let msg = format!("{e}");
+        msg.contains("undefined symbol")
+            && (msg.contains("jackdaw")
+                || msg.contains("teardown_tracked")
+                || msg.contains("GameApp"))
+    }
 }
 
 impl std::fmt::Display for LoadError {
@@ -250,6 +297,7 @@ impl std::fmt::Display for LoadError {
             Self::InvalidName => {
                 write!(f, "extension name is not valid UTF-8 or contains NUL")
             }
+            Self::InstallIo(msg) => write!(f, "install io: {msg}"),
         }
     }
 }
@@ -303,7 +351,8 @@ enum OpenedDylib {
     Game {
         lib: libloading::Library,
         name: String,
-        build: unsafe extern "C" fn(*mut bevy::app::App),
+        build: unsafe extern "C" fn(*mut bevy::ecs::world::World),
+        teardown: unsafe extern "C" fn(*mut bevy::ecs::world::World),
     },
 }
 
@@ -348,6 +397,7 @@ fn open_and_verify(path: &Path) -> Result<OpenedDylib, LoadError> {
             lib,
             name,
             build: entry.build,
+            teardown: entry.teardown,
         });
     }
 
@@ -383,8 +433,19 @@ fn open_and_verify(path: &Path) -> Result<OpenedDylib, LoadError> {
 }
 
 fn try_load(app: &mut App, path: &Path) -> Result<LoadedKind, LoadError> {
-    let result = match open_and_verify(path)? {
-        OpenedDylib::Extension { lib, name, ctor } => {
+    // Open the dylib first — `lib` is the libloading handle that
+    // keeps the code mapped for the life of the process. We keep it
+    // by reference via `get_reflect_register` so that lookup succeeds
+    // while the library is still on our side of ownership.
+    let lib_and_kind = open_and_verify_keep_lib(path)?;
+    match lib_and_kind {
+        (lib, OpenedKind::Extension { name, ctor }) => {
+            // Run the per-dylib reflect registrar against our registry
+            // BEFORE handing the library off. Uses the exported
+            // `REFLECT_REGISTER_SYMBOL` (if present); absent on older
+            // dylibs, treated as a no-op.
+            call_reflect_register_symbol(app.world_mut(), &lib);
+
             jackdaw_api::register_extension(app, &name, move || {
                 // SAFETY: the dylib stays loaded because its
                 // Library handle is kept in LoadedDylibs;
@@ -399,20 +460,31 @@ fn try_load(app: &mut App, path: &Path) -> Result<LoadedKind, LoadError> {
                 .libs
                 .push(lib);
 
+            // Ensure every reflected Component has a ComponentId so
+            // the Add Component picker finds it without waiting for
+            // the game to start querying.
+            register_derived_component_ids(app.world_mut());
+
             Ok(LoadedKind::Extension(name))
         }
-        OpenedDylib::Game { lib, name, build } => {
-            // Run the game's build fn against the editor's App,
-            // isolated from editor panics via `catch_unwind`. The
-            // build fn typically calls `app.add_plugins(GamePlugin)`
-            // and registers systems gated on `PlayState::Playing`.
-            let app_ptr: *mut bevy::app::App = app as *mut _;
+        (lib, OpenedKind::Game { name, build, teardown }) => {
+            // Register the game's `#[derive(Reflect)]` types into our
+            // AppTypeRegistry via the exported symbol, then assign
+            // ComponentIds so the inspector sees them before build()
+            // runs any systems that query them.
+            call_reflect_register_symbol(app.world_mut(), &lib);
+            register_derived_component_ids(app.world_mut());
+
+            // v2 builds take `*mut World`. Call from an exclusive
+            // context: we have `&mut App` here, so deriving
+            // `&mut World` via `world_mut()` is fine.
+            let world_ptr: *mut bevy::ecs::world::World = app.world_mut() as *mut _;
             let build_result = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 // SAFETY: `build` is a function pointer from a
-                // compat-verified dylib; `app_ptr` is a valid
+                // compat-verified dylib; `world_ptr` is a valid
                 // mutable reference for the duration of this call;
                 // the dylib stays alive via LoadedDylibs.
-                unsafe { build(app_ptr) }
+                unsafe { build(world_ptr) }
             }));
             if build_result.is_err() {
                 // Build panicked. The library is still loaded — we
@@ -425,10 +497,15 @@ fn try_load(app: &mut App, path: &Path) -> Result<LoadedKind, LoadError> {
                 return Err(LoadError::EntryPanicked);
             }
 
-            app.world_mut()
-                .resource_mut::<GameCatalog>()
-                .games
-                .push(name.clone());
+            // Record build + teardown fn pointers in the GameCatalog
+            // so hot-reload can find them later.
+            {
+                let mut catalog = app.world_mut().resource_mut::<GameCatalog>();
+                catalog.games.push(name.clone());
+                catalog
+                    .entries
+                    .insert(name.clone(), LoadedGameEntry { build, teardown });
+            }
             app.world_mut()
                 .resource_mut::<LoadedDylibs>()
                 .libs
@@ -436,15 +513,7 @@ fn try_load(app: &mut App, path: &Path) -> Result<LoadedKind, LoadError> {
 
             Ok(LoadedKind::Game(name))
         }
-    };
-
-    // Whether we loaded an extension or a game (or not),
-    // sweep the inventory for any new `#[derive(Reflect)]` types
-    // introduced by this dylib and register them in AppTypeRegistry
-    // so the inspector / remote / scene (de)serialiser see them.
-    register_derived_reflect_types(app.world_mut());
-
-    result
+    }
 }
 
 /// Load a dylib at runtime from a `&mut World` context.
@@ -472,8 +541,9 @@ fn try_load(app: &mut App, path: &Path) -> Result<LoadedKind, LoadError> {
 ///
 /// Returns the loaded kind (Extension or Game) on success.
 pub fn load_from_path(world: &mut World, path: &Path) -> Result<LoadedKind, LoadError> {
-    match open_and_verify(path)? {
-        OpenedDylib::Extension { lib, name, ctor } => {
+    let lib_and_kind = open_and_verify_keep_lib(path)?;
+    match lib_and_kind {
+        (lib, OpenedKind::Extension { name, ctor }) => {
             // Already-registered extensions come through the same
             // code path when the user re-installs a rebuild. Don't
             // double-register — registering the same extension twice
@@ -487,10 +557,16 @@ pub fn load_from_path(world: &mut World, path: &Path) -> Result<LoadedKind, Load
                     "Extension `{name}` already registered; keeping the new library handle \
                      alive but skipping re-registration."
                 );
+                // Re-run reflect register in case the rebuild added
+                // new types to the existing extension.
+                call_reflect_register_symbol(world, &lib);
+                register_derived_component_ids(world);
                 world.resource_mut::<LoadedDylibs>().libs.push(lib);
-                register_derived_reflect_types(world);
                 return Ok(LoadedKind::Extension(name));
             }
+
+            call_reflect_register_symbol(world, &lib);
+            register_derived_component_ids(world);
 
             let sample = unsafe { ctor() };
             let kind = sample.kind();
@@ -504,58 +580,176 @@ pub fn load_from_path(world: &mut World, path: &Path) -> Result<LoadedKind, Load
             jackdaw_api::load_static_extension(world, extension);
 
             world.resource_mut::<LoadedDylibs>().libs.push(lib);
-            register_derived_reflect_types(world);
 
             Ok(LoadedKind::Extension(name))
         }
-        OpenedDylib::Game {
-            lib,
-            name,
-            build: _,
-        } => {
-            // If this game was already loaded at startup, skip the
-            // runtime bookkeeping entirely. Re-pushing to
-            // GameCatalog + LoadedDylibs would produce duplicate
-            // entries, and the restart-to-activate path in the
-            // launcher is what actually picks up new code anyway.
+        (lib, OpenedKind::Game { name, build, teardown }) => {
             let already_loaded = world
                 .resource::<GameCatalog>()
                 .games
                 .iter()
                 .any(|n| n == &name);
             if already_loaded {
-                info!(
-                    "Game `{name}` already loaded in this process; skipping runtime \
-                     re-registration. The installed file on disk is the new build; a \
-                     jackdaw restart will pick it up."
-                );
-                // Drop the extra library handle — it's a second
-                // dlopen of the same file, and the startup-loaded
-                // one keeps the in-memory code alive.
-                drop(lib);
-                return Ok(LoadedKind::Game(name));
+                let prior = world
+                    .resource::<GameCatalog>()
+                    .entries
+                    .get(&name)
+                    .copied();
+                if let Some(prior_entry) = prior {
+                    info!("Hot reload: tearing down prior version of `{name}`");
+                    let world_ptr: *mut bevy::ecs::world::World = world as *mut _;
+                    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| unsafe {
+                        (prior_entry.teardown)(world_ptr)
+                    }));
+                }
             }
 
+            // Register reflect types + ComponentIds BEFORE build().
+            // build() adds systems that may query game components;
+            // the Add Component picker needs ComponentIds immediately.
+            call_reflect_register_symbol(world, &lib);
+            register_derived_component_ids(world);
+
+            let world_ptr: *mut bevy::ecs::world::World = world as *mut _;
+            let build_result = std::panic::catch_unwind(AssertUnwindSafe(|| unsafe {
+                build(world_ptr)
+            }));
+            if build_result.is_err() {
+                warn!("load_from_path: build panicked for `{name}`");
+                world.resource_mut::<LoadedDylibs>().libs.push(lib);
+                return Err(LoadError::EntryPanicked);
+            }
+
+            {
+                let mut catalog = world.resource_mut::<GameCatalog>();
+                if !catalog.games.iter().any(|n| n == &name) {
+                    catalog.games.push(name.clone());
+                }
+                catalog
+                    .entries
+                    .insert(name.clone(), LoadedGameEntry { build, teardown });
+            }
             world.resource_mut::<LoadedDylibs>().libs.push(lib);
-            world.resource_mut::<GameCatalog>().games.push(name.clone());
-            register_derived_reflect_types(world);
-            warn!(
-                "Game dylib `{name}` cannot be activated at runtime (requires startup \
-                 context). Restart jackdaw to activate it."
-            );
+
             Ok(LoadedKind::Game(name))
         }
     }
 }
 
-/// Sweep `inventory::iter()` into `AppTypeRegistry` so any
-/// `#[derive(Reflect)]` types newly present in the process (via a
-/// just-dlopened dylib) become visible to the inspector / remote
-/// protocol / scene (de)serialiser. Bevy only calls this once at
-/// `App::default()`, so without this follow-up call game and
-/// extension reflect types stay invisible to editor tooling.
-fn register_derived_reflect_types(world: &mut World) {
-    if let Some(registry) = world.get_resource::<bevy::ecs::reflect::AppTypeRegistry>() {
-        registry.write().register_derived_types();
+/// Opened-dylib payload without carrying the `Library` handle. Paired
+/// with the handle at the call site so the caller can both move the
+/// library into `LoadedDylibs` at the right moment and look up symbols
+/// on it in the meantime.
+#[allow(improper_ctypes_definitions)]
+enum OpenedKind {
+    Extension {
+        name: String,
+        ctor: unsafe extern "C" fn() -> Box<dyn jackdaw_api::JackdawExtension>,
+    },
+    Game {
+        name: String,
+        build: unsafe extern "C" fn(*mut bevy::ecs::world::World),
+        teardown: unsafe extern "C" fn(*mut bevy::ecs::world::World),
+    },
+}
+
+/// dlopen + verify-compat + read entry, returning the library handle
+/// separately so callers can look up extra symbols (like the reflect-
+/// register FFI symbol) on the loaded library before moving the handle
+/// into `LoadedDylibs`.
+fn open_and_verify_keep_lib(
+    path: &Path,
+) -> Result<(libloading::Library, OpenedKind), LoadError> {
+    match open_and_verify(path)? {
+        OpenedDylib::Extension { lib, name, ctor } => {
+            Ok((lib, OpenedKind::Extension { name, ctor }))
+        }
+        OpenedDylib::Game {
+            lib,
+            name,
+            build,
+            teardown,
+        } => Ok((
+            lib,
+            OpenedKind::Game {
+                name,
+                build,
+                teardown,
+            },
+        )),
     }
+}
+
+/// Look up the per-dylib reflect-registrar symbol and, if present, run
+/// it against the host's `AppTypeRegistry`. Missing symbol is a no-op
+/// (backward-compatible with extensions that pre-date this FFI point).
+///
+/// The symbol is `jackdaw_register_reflect_types_v1` (see
+/// [`jackdaw_api::ffi::REFLECT_REGISTER_SYMBOL`]). Each cdylib's
+/// `build.rs` generates its body with explicit
+/// `registry.register::<T>()` calls for every `#[derive(Reflect)]`
+/// type in the crate, and the `export_game!` / `export_extension!`
+/// macros emit the `#[unsafe(no_mangle)] extern "Rust"` wrapper.
+fn call_reflect_register_symbol(world: &mut World, lib: &libloading::Library) {
+    use jackdaw_api::ffi::{REFLECT_REGISTER_SYMBOL, ReflectRegisterFn};
+
+    let Some(registry_res) = world.get_resource::<bevy::ecs::reflect::AppTypeRegistry>() else {
+        info!("reflect-register: AppTypeRegistry missing, skipping");
+        return;
+    };
+    let registry_handle = registry_res.clone();
+
+    let reg_sym: libloading::Symbol<ReflectRegisterFn> =
+        match unsafe { lib.get(REFLECT_REGISTER_SYMBOL) } {
+            Ok(s) => s,
+            Err(e) => {
+                info!("reflect-register: symbol lookup failed: {e}; dylib has no types to register");
+                return;
+            }
+        };
+
+    let before = registry_handle.read().iter().count();
+    let mut guard = registry_handle.write();
+    let call_result = std::panic::catch_unwind(AssertUnwindSafe(|| unsafe {
+        reg_sym(&mut *guard)
+    }));
+    let after = guard.iter().count();
+    drop(guard);
+    if call_result.is_err() {
+        warn!("reflect-register symbol panicked; types may be missing from the registry");
+    } else {
+        info!(
+            "reflect-register: called. Registry size {before} -> {after} \
+             ({} new type entries)",
+            after.saturating_sub(before)
+        );
+    }
+}
+
+/// Ensure every `Component`-reflecting type in `AppTypeRegistry` has a
+/// bevy `ComponentId` assigned. Without this sweep, a newly-loaded
+/// game's components stay invisible to the Add Component picker
+/// (`src/inspector/component_picker.rs:108`) until something spawns or
+/// queries them — which for game components won't happen until Play is
+/// pressed.
+///
+/// [`ReflectComponent::register_component`] is idempotent, so this sweep
+/// is safe to run on every dlopen.
+fn register_derived_component_ids(world: &mut World) {
+    let reflect_components: Vec<bevy::ecs::reflect::ReflectComponent> = {
+        let registry = world
+            .resource::<bevy::ecs::reflect::AppTypeRegistry>()
+            .read();
+        registry
+            .iter()
+            .filter_map(|r| r.data::<bevy::ecs::reflect::ReflectComponent>().cloned())
+            .collect()
+    };
+    for rc in &reflect_components {
+        rc.register_component(world);
+    }
+    info!(
+        "register_derived_component_ids: ensured {} ComponentIds registered",
+        reflect_components.len()
+    );
 }

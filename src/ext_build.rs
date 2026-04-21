@@ -357,12 +357,52 @@ fn estimate_total_artifacts(project_dir: &Path) -> Option<u32> {
     Some(packages.len() as u32)
 }
 
-/// Derive the expected cdylib filename from the project's package
-/// name. Falls back to `libunnamed.<ext>` if the manifest doesn't
-/// declare a name (which cargo would have rejected anyway, but it
-/// keeps this helper infallible).
-fn artifact_file_name(project_dir: &Path) -> String {
-    let package_name = std::fs::read_to_string(project_dir.join("Cargo.toml"))
+/// Run `cargo clean -p <package>` for the project rooted at
+/// `project_dir`. Used by the auto-recovery path: when the editor
+/// SDK is rebuilt, the user's project `.so` cached in
+/// `<project>/target/debug/` still references the old SDK symbol
+/// hashes. Cleaning just the user's package (not `-p bevy`) drops
+/// that stale artifact without forcing a multi-minute bevy
+/// rebuild — the bevy rlib cache stays.
+///
+/// Blocks until cargo exits. Call from a task pool.
+pub fn cargo_clean_project(project_dir: &Path) -> Result<(), BuildError> {
+    let project_dir = project_dir
+        .canonicalize()
+        .map_err(|_| BuildError::NotADirectory(project_dir.to_path_buf()))?;
+    let manifest = project_dir.join("Cargo.toml");
+    if !manifest.is_file() {
+        return Err(BuildError::MissingCargoToml(project_dir));
+    }
+    let package_name = package_name_from_manifest(&project_dir);
+
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(&project_dir);
+    cmd.args([
+        "clean",
+        "--manifest-path",
+        manifest
+            .to_str()
+            .expect("Cargo.toml path must be valid UTF-8"),
+        "-p",
+        &package_name,
+    ]);
+    let output = cmd.output().map_err(BuildError::BuildSpawn)?;
+    if !output.status.success() {
+        return Err(BuildError::BuildFailed {
+            status: output.status,
+            stderr_tail: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Parse `name = "..."` out of a project's `Cargo.toml`. Shared
+/// with [`artifact_file_name`] — when the manifest doesn't declare
+/// a name (shouldn't happen for anything cargo accepted), returns
+/// `"unnamed"`.
+fn package_name_from_manifest(project_dir: &Path) -> String {
+    std::fs::read_to_string(project_dir.join("Cargo.toml"))
         .ok()
         .and_then(|contents| {
             contents.lines().find_map(|line| {
@@ -373,7 +413,15 @@ fn artifact_file_name(project_dir: &Path) -> String {
                     .map(|rest| rest.trim().trim_matches('"').trim_matches('\'').to_owned())
             })
         })
-        .unwrap_or_else(|| "unnamed".to_string());
+        .unwrap_or_else(|| "unnamed".to_string())
+}
+
+/// Derive the expected cdylib filename from the project's package
+/// name. Falls back to `libunnamed.<ext>` if the manifest doesn't
+/// declare a name (which cargo would have rejected anyway, but it
+/// keeps this helper infallible).
+fn artifact_file_name(project_dir: &Path) -> String {
+    let package_name = package_name_from_manifest(project_dir);
 
     if cfg!(target_os = "windows") {
         format!("{package_name}.dll")

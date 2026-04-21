@@ -39,7 +39,14 @@ use core::ffi::{CStr, c_char};
 /// Current ABI version. Bump on any breaking change to
 /// [`ExtensionEntry`], [`crate::JackdawExtension`], or the loader's
 /// expectations about the entry function.
-pub const API_VERSION: u32 = 1;
+///
+/// Extensions and games can diverge (each struct carries its own
+/// version field in its header), but we use a shared monotonic
+/// number so the loader's compat check is a single comparison.
+/// v2 introduced the `GameEntry::teardown` pointer and swapped
+/// `build` from `*mut App` to `*mut World`, needed for in-process
+/// hot reload of games.
+pub const API_VERSION: u32 = 2;
 
 /// Bevy minor-version string the host was built against. The loader
 /// compares this against the dylib's embedded value and refuses to
@@ -66,6 +73,43 @@ pub const ENTRY_SYMBOL: &[u8] = b"jackdaw_extension_entry_v1\0";
 /// it's absent the dylib is treated as an extension and
 /// [`ENTRY_SYMBOL`] is looked up next.
 pub const GAME_ENTRY_SYMBOL: &[u8] = b"jackdaw_game_entry_v1\0";
+
+/// Optional symbol each extension / game dylib may expose to register
+/// its own `#[derive(Reflect)]` types into the host's
+/// `AppTypeRegistry` after `dlopen`. The loader calls it with a
+/// mutable reference to the host's `TypeRegistry` right after
+/// `dlopen` succeeds and before invoking `build`.
+///
+/// The symbol is optional: a dylib without it simply contributes no
+/// types, and the loader skips this step.
+///
+/// Jackdaw provides the body automatically — each scaffolded project
+/// ships with a `build.rs` that scans its `src/` for
+/// `#[derive(Reflect)]` and generates explicit
+/// `registry.register::<T>()` lines inside
+/// `$OUT_DIR/__jackdaw_reflect_types.rs`, which the
+/// [`export_game!`](crate::export_game) /
+/// [`export_extension!`](crate::export_extension) macros `include!`
+/// into a `#[unsafe(no_mangle)] extern "Rust" fn` wrapper named
+/// `jackdaw_register_reflect_types_v1`. No user code writes these
+/// registrations by hand.
+///
+/// This pattern is the canonical Rust approach for auto-registering
+/// types across `dlopen`: dexterous_developer uses the same
+/// exported-symbol approach. We do **not** reach across the boundary
+/// into bevy's `inventory`-based `AutomaticReflectRegistrations` —
+/// that breaks under `bevy/dynamic_linking` because the shared-dylib
+/// proxy doesn't preserve inventory's private invariants for
+/// external consumers.
+pub const REFLECT_REGISTER_SYMBOL: &[u8] = b"jackdaw_register_reflect_types_v1\0";
+
+/// Signature for [`REFLECT_REGISTER_SYMBOL`]. `extern "Rust"` is
+/// correct because both sides share `TypeRegistry`'s type layout
+/// through the same `libjackdaw_sdk.so` (via the
+/// `bevy/dynamic_linking` feature + jackdaw's rustc wrapper). The
+/// FFI boundary only needs ABI stability for the `&mut TypeRegistry`
+/// receiver, which is a pointer into the shared dylib's data.
+pub type ReflectRegisterFn = unsafe extern "Rust" fn(&mut bevy::reflect::TypeRegistry);
 
 /// Shape returned by every dylib extension's entry function.
 ///
@@ -98,21 +142,25 @@ pub struct ExtensionEntry {
 
 /// Shape returned by every game dylib's entry function.
 ///
-/// Parallel to [`ExtensionEntry`] but carries a `build` callback
-/// that receives the editor's `App` directly — the game author
-/// provides a [`bevy::app::Plugin`] whose `build` installs the
-/// game's systems into the editor's World. Game systems gate their
-/// execution on jackdaw's `PlayState::Playing` run condition so
-/// they're dormant until the user clicks the Play button.
+/// v2 takes `*mut World` (not `*mut App`) so it can be called at
+/// runtime from any exclusive system — not just during app
+/// construction. This is the foundation for hot reload: the loader
+/// can call `teardown` then `build` from a regular system, without
+/// needing to preserve a `*mut App` past `App::run`.
 ///
 /// # Safety
 ///
 /// Same contract as [`ExtensionEntry`]: NUL-terminated static
 /// strings, same allocator on both sides (guaranteed by
-/// `bevy/dynamic_linking` + jackdaw_sdk's proxy dylib). The
-/// `build` function pointer must be callable with any valid
-/// `*mut App`; the loader wraps the call in `catch_unwind` so
-/// panics in game setup don't abort the editor.
+/// `bevy/dynamic_linking` + jackdaw_sdk's proxy dylib). Both
+/// `build` and `teardown` must be callable with any valid
+/// `*mut World`; the loader wraps each call in `catch_unwind` so a
+/// panic in game code doesn't abort the editor.
+///
+/// The `build` function wires the game's `GamePlugin` against a
+/// `GameApp` constructed inside the macro-emitted stub; it's
+/// idempotent with respect to `teardown` (calling the pair in
+/// sequence is a full reload cycle).
 #[repr(C)]
 #[allow(improper_ctypes_definitions)]
 pub struct GameEntry {
@@ -120,5 +168,6 @@ pub struct GameEntry {
     pub bevy_version: *const c_char,
     pub profile: *const c_char,
     pub name: *const c_char,
-    pub build: unsafe extern "C" fn(*mut bevy::app::App),
+    pub build: unsafe extern "C" fn(*mut bevy::ecs::world::World),
+    pub teardown: unsafe extern "C" fn(*mut bevy::ecs::world::World),
 }

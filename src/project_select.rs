@@ -34,6 +34,16 @@ impl Plugin for ProjectSelectPlugin {
                     refresh_build_progress_ui,
                 )
                     .run_if(in_state(AppState::ProjectSelect)),
+            )
+            // The dylib-install step MUST run outside of `Update`'s
+            // `schedule_scope`. The game's `GameApp::add_systems(Update, …)`
+            // inserts into `Schedules`; doing that while bevy has
+            // `Update` checked out via `schedule_scope` causes the
+            // modification to be overwritten when the scope re-inserts
+            // at exit. `Last` has its own scope and doesn't clash.
+            .add_systems(
+                Last,
+                apply_pending_install.run_if(in_state(AppState::ProjectSelect)),
             );
     }
 }
@@ -126,6 +136,27 @@ struct NewProjectState {
     /// after the scaffold task succeeds so the user lands in the
     /// editor with the game/extension dylib already installed.
     build_task: Option<Task<Result<PathBuf, crate::ext_build::BuildError>>>,
+    /// In-flight `cargo clean -p <crate>` triggered by the
+    /// auto-recovery path when the first install fails with an
+    /// SDK symbol mismatch. When this completes successfully, the
+    /// poller re-runs `build_task` against the same project path.
+    clean_task: Option<Task<Result<(), crate::ext_build::BuildError>>>,
+    /// `true` after we've triggered the clean+rebuild once. Stops
+    /// us from infinite-looping if a second build still fails with
+    /// the same symbol mismatch (indicating the project has some
+    /// other issue).
+    retry_attempted: bool,
+    /// Tunnel from the install-runs-in-commands-queue closure back
+    /// into this poller. The closure pushes its install result
+    /// here; the next frame the poller drains it and either
+    /// proceeds or triggers the auto-clean recovery.
+    metadata_outcome:
+        Option<std::sync::Arc<std::sync::Mutex<Option<Result<(), jackdaw_loader::LoadError>>>>>,
+    /// Artifact waiting to be installed by `apply_pending_install`
+    /// (runs in `Last`, not `Update`, so modifications to the
+    /// `Update` schedule by the game's `GameApp::add_systems` don't
+    /// collide with `Update`'s active `schedule_scope`).
+    pending_install: Option<PathBuf>,
     /// Shared progress sink the build task writes to. The
     /// `refresh_build_progress_ui` system reads a snapshot from
     /// here each frame and copies it into `build_progress_snapshot`
@@ -555,6 +586,19 @@ pub fn enter_project_with(world: &mut World, root: PathBuf, skip_build: bool) {
         .and_then(|s| s.to_str())
         .unwrap_or("project")
         .to_owned();
+
+    // Show the "Opening project" modal so the user sees the build
+    // + any auto-recovery retry rather than staring at a frozen
+    // launcher. The scaffold flow already has its own modal; when
+    // called from there we skip spawning a second one.
+    let scaffold_modal_already_open = {
+        let mut q = world.query_filtered::<Entity, With<NewProjectModalRoot>>();
+        q.iter(world).next().is_some()
+    };
+    if !scaffold_modal_already_open {
+        open_project_progress_modal(world, &project_name);
+    }
+
     let progress = std::sync::Arc::new(std::sync::Mutex::new(
         crate::ext_build::BuildProgress::default(),
     ));
@@ -564,6 +608,7 @@ pub fn enter_project_with(world: &mut World, root: PathBuf, skip_build: bool) {
         state.status = Some(format!("Building `{project_name}`…"));
         state.build_progress = Some(std::sync::Arc::clone(&progress));
         state.build_progress_snapshot = Some(crate::ext_build::BuildProgress::default());
+        state.retry_attempted = false;
     }
 
     let root_for_task = root;
@@ -580,6 +625,11 @@ pub fn enter_project_with(world: &mut World, root: PathBuf, skip_build: bool) {
 /// Apply the project-root state change and flip `AppState` to
 /// `Editor`. Called from [`enter_project`] (no build needed) and
 /// from the build-complete poller (build finished, transitioning).
+///
+/// If the project has a file at `<root>/assets/scene.jsn`, that
+/// scene is auto-loaded so the user lands in a populated editor
+/// rather than an empty one. This is the convention the game
+/// template ships with.
 fn transition_to_editor(world: &mut World, root: PathBuf) {
     let config = project::load_project_config(&root)
         .unwrap_or_else(|| project::create_default_project(&root));
@@ -605,6 +655,15 @@ fn transition_to_editor(world: &mut World, root: PathBuf) {
 
     let mut next_state = world.resource_mut::<NextState<AppState>>();
     next_state.set(AppState::Editor);
+
+    // Intentionally no scene auto-load here. Once a project has
+    // multiple `.jsn` scenes, auto-loading a conventional path
+    // would be confusing ("why is jackdaw showing me this one?").
+    // Users open scenes explicitly via **File → Open** or via the
+    // asset-browser panel. Last-opened-scene persistence per
+    // project is tracked as a follow-up so users don't have to
+    // re-pick on every open; until then the editor opens empty
+    // after transition.
 }
 
 /// Spawn a pill-style button inside the "+ New Extension / + New
@@ -679,6 +738,139 @@ pub fn close_new_project_modal(world: &mut World) {
     state.folder_task = None;
     state.scaffold_task = None;
     state.status = None;
+}
+
+/// Lightweight modal shown while `enter_project_with` builds an
+/// **existing** project — the user picked a recent entry or
+/// browsed to a folder and we need something visual while cargo
+/// runs + the auto-recovery retry may fire. Reuses the same
+/// `NewProjectProgressContainer` / `NewProjectProgressCrateLabel`
+/// / progress-bar / log-tail markers as the scaffold modal, so
+/// the existing `refresh_build_progress_ui` system drives it
+/// without extra wiring. Despawned via `close_new_project_modal`.
+pub fn open_project_progress_modal(world: &mut World, project_name: &str) {
+    close_new_project_modal(world);
+
+    let editor_font = world.resource::<EditorFont>().0.clone();
+
+    let scrim = world
+        .spawn((
+            NewProjectModalRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..Default::default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            GlobalZIndex(100),
+        ))
+        .id();
+
+    let card = world
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(12.0),
+                padding: UiRect::all(Val::Px(24.0)),
+                min_width: Val::Px(480.0),
+                max_width: Val::Px(720.0),
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(tokens::BORDER_RADIUS_MD)),
+                ..Default::default()
+            },
+            BackgroundColor(tokens::PANEL_BG),
+            BorderColor::all(tokens::BORDER_SUBTLE),
+            ChildOf(scrim),
+        ))
+        .id();
+
+    world.spawn((
+        Text::new(format!("Opening `{project_name}`")),
+        TextFont {
+            font: editor_font.clone(),
+            font_size: tokens::FONT_LG,
+            ..Default::default()
+        },
+        TextColor(tokens::TEXT_PRIMARY),
+        ChildOf(card),
+    ));
+
+    world.spawn((
+        NewProjectStatusText,
+        Text::new(String::new()),
+        TextFont {
+            font: editor_font.clone(),
+            font_size: tokens::FONT_SM,
+            ..Default::default()
+        },
+        TextColor(tokens::TEXT_SECONDARY),
+        ChildOf(card),
+    ));
+
+    // Progress container + children mirror the scaffold modal so
+    // `refresh_build_progress_ui` walks the same marker chain.
+    let progress_container = world
+        .spawn((
+            NewProjectProgressContainer,
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
+                margin: UiRect::top(Val::Px(8.0)),
+                display: Display::None,
+                ..Default::default()
+            },
+            ChildOf(card),
+        ))
+        .id();
+
+    world.spawn((
+        NewProjectProgressCrateLabel,
+        Text::new(String::new()),
+        TextFont {
+            font: editor_font.clone(),
+            font_size: tokens::FONT_SM,
+            ..Default::default()
+        },
+        TextColor(tokens::TEXT_SECONDARY),
+        ChildOf(progress_container),
+    ));
+
+    let bar_slot = world
+        .spawn((
+            NewProjectProgressBarSlot,
+            Node {
+                width: Val::Percent(100.0),
+                ..Default::default()
+            },
+            ChildOf(progress_container),
+        ))
+        .id();
+    world.spawn((
+        jackdaw_feathers::progress::progress_bar(0.0),
+        ChildOf(bar_slot),
+    ));
+
+    world.spawn((
+        NewProjectLogText,
+        Text::new(String::new()),
+        TextFont {
+            font: editor_font.clone(),
+            font_size: tokens::FONT_SM,
+            ..Default::default()
+        },
+        TextColor(tokens::TEXT_SECONDARY),
+        Node {
+            max_height: Val::Px(220.0),
+            overflow: Overflow::clip(),
+            ..Default::default()
+        },
+        ChildOf(progress_container),
+    ));
 }
 
 /// Show the New Project modal with the given preset pre-selected.
@@ -1143,36 +1335,24 @@ fn poll_new_project_tasks(
     }
 
     // Build task completed (used by both scaffold-then-build and
-    // open-then-build). Install the produced `.so`, then either
-    // restart (game → systems need startup-time registration) or
-    // transition directly into the editor (extension / live-load).
+    // open-then-build). Install the produced `.so`, transition to
+    // the editor, or — on an SDK-symbol-mismatch — kick off the
+    // auto-recovery path: cargo clean -p <crate> then re-build.
     if let Some(task) = state.build_task.as_mut() {
         if let Some(result) = future::block_on(future::poll_once(task)) {
             state.build_task = None;
             match result {
                 Ok(artifact) => {
                     info!("Build produced {}", artifact.display());
-                    let project = state.pending_project.take();
-                    commands.queue(move |world: &mut World| {
-                        let kind = crate::extensions_dialog::handle_install_from_path(
-                            world,
-                            artifact,
-                        );
-                        close_new_project_modal(world);
-                        if matches!(kind, Some(jackdaw_loader::LoadedKind::Game(_))) {
-                            // Persist the project as "last opened" so
-                            // the respawned process reopens it.
-                            if let Some(p) = &project {
-                                let config = project::load_project_config(p)
-                                    .unwrap_or_else(|| project::create_default_project(p));
-                                project::touch_recent(p, &config.project.name);
-                            }
-                            info!("Auto-restarting jackdaw to activate the newly-installed game.");
-                            crate::restart::restart_jackdaw();
-                        } else if let Some(p) = project {
-                            transition_to_editor(world, p);
-                        }
-                    });
+                    // Stash for `apply_pending_install` (Last
+                    // schedule). Setting up the outcome tunnel
+                    // still, so the install's result feeds back
+                    // into our auto-recovery path.
+                    let outcome: std::sync::Arc<
+                        std::sync::Mutex<Option<Result<(), jackdaw_loader::LoadError>>>,
+                    > = std::sync::Arc::new(std::sync::Mutex::new(None));
+                    state.metadata_outcome = Some(outcome);
+                    state.pending_install = Some(artifact);
                 }
                 Err(err) => {
                     warn!("Build failed: {err}");
@@ -1181,6 +1361,95 @@ fn poll_new_project_tasks(
                          Fix the issue and try opening the project again."
                     ));
                     state.pending_project = None;
+                    state.retry_attempted = false;
+                }
+            }
+        }
+    }
+
+    // Install-outcome poller: reads the Arc<Mutex<...>> we handed
+    // to the commands.queue closure. On Ok we're done. On an
+    // Err-with-symbol-mismatch, kick off `cargo clean` (one retry
+    // max, tracked via `retry_attempted`).
+    if let Some(outcome) = state.metadata_outcome.clone() {
+        let taken = {
+            let Ok(mut slot) = outcome.lock() else {
+                return;
+            };
+            slot.take()
+        };
+        if let Some(result) = taken {
+            state.metadata_outcome = None;
+            match result {
+                Ok(()) => {
+                    state.retry_attempted = false;
+                }
+                Err(err) if err.is_symbol_mismatch() && !state.retry_attempted => {
+                    state.retry_attempted = true;
+                    let Some(project) = state.pending_project.clone() else {
+                        state.status = Some("Auto-recovery failed: no project context".into());
+                        return;
+                    };
+                    state.status = Some(
+                        "Editor SDK changed since last build — cleaning project cache…".into(),
+                    );
+                    let project_for_task = project;
+                    state.clean_task = Some(AsyncComputeTaskPool::get().spawn(async move {
+                        crate::ext_build::cargo_clean_project(&project_for_task)
+                    }));
+                }
+                Err(err) => {
+                    warn!("Install failed (no retry): {err}");
+                    state.status = Some(format!(
+                        "Install failed: {err}. Try opening the project again."
+                    ));
+                    state.pending_project = None;
+                    state.retry_attempted = false;
+                }
+            }
+        }
+    }
+
+    // Clean-task completed — kick off a fresh build.
+    if let Some(task) = state.clean_task.as_mut() {
+        if let Some(result) = future::block_on(future::poll_once(task)) {
+            state.clean_task = None;
+            match result {
+                Ok(()) => {
+                    let Some(project) = state.pending_project.clone() else {
+                        return;
+                    };
+                    let project_name = project
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("project")
+                        .to_owned();
+                    state.status = Some(format!("Rebuilding `{project_name}` from scratch…"));
+                    // Fresh progress sink — the old one had the prior
+                    // build's log tail, which would mislead the user.
+                    let progress = std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::ext_build::BuildProgress::default(),
+                    ));
+                    state.build_progress = Some(std::sync::Arc::clone(&progress));
+                    state.build_progress_snapshot =
+                        Some(crate::ext_build::BuildProgress::default());
+
+                    let project_for_task = project;
+                    let progress_for_task = std::sync::Arc::clone(&progress);
+                    state.build_task = Some(AsyncComputeTaskPool::get().spawn(async move {
+                        crate::ext_build::build_extension_project_with_progress(
+                            &project_for_task,
+                            Some(progress_for_task),
+                        )
+                    }));
+                }
+                Err(err) => {
+                    warn!("Cargo clean failed: {err}");
+                    state.status = Some(format!(
+                        "Auto-recovery failed during cargo clean: {err}"
+                    ));
+                    state.pending_project = None;
+                    state.retry_attempted = false;
                 }
             }
         }
@@ -1306,6 +1575,50 @@ fn refresh_build_progress_ui(
     for mut t in log_texts.iter_mut() {
         if t.0 != joined {
             t.0 = joined.clone();
+        }
+    }
+}
+
+/// Install a freshly-built game/extension dylib, running in the
+/// `Last` schedule so `GameApp::add_systems(Update, …)` inside the
+/// game's build function mutates `Update` while nobody holds it in
+/// `schedule_scope`. See the plugin-registration block at the top
+/// of this file for context.
+///
+/// Takes `&mut World` directly; reads `NewProjectState.pending_install`,
+/// calls `handle_install_from_path`, writes the install result into
+/// `NewProjectState.metadata_outcome` for the auto-recovery poller
+/// to pick up on the next frame.
+fn apply_pending_install(world: &mut World) {
+    let artifact_opt = world
+        .resource_mut::<NewProjectState>()
+        .pending_install
+        .take();
+    let Some(artifact) = artifact_opt else {
+        return;
+    };
+    let outcome_arc = world
+        .resource::<NewProjectState>()
+        .metadata_outcome
+        .clone();
+
+    let result = crate::extensions_dialog::handle_install_from_path(world, artifact);
+    let is_ok = result.is_ok();
+
+    if let Some(arc) = outcome_arc {
+        if let Ok(mut slot) = arc.lock() {
+            *slot = Some(result.map(|_| ()));
+        }
+    }
+
+    if is_ok {
+        let project = world
+            .resource_mut::<NewProjectState>()
+            .pending_project
+            .clone();
+        close_new_project_modal(world);
+        if let Some(p) = project {
+            transition_to_editor(world, p);
         }
     }
 }

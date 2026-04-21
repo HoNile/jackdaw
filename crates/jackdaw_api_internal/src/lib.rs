@@ -71,6 +71,8 @@ use jackdaw_panels::{
     DockWindowDescriptor, WindowRegistry, WorkspaceDescriptor, WorkspaceRegistry,
 };
 
+pub mod runtime;
+
 pub use jackdaw_api_macros::operator;
 pub use lifecycle::{
     ActiveModalOperator, CallOperatorError, CallOperatorSettings, Extension, ExtensionCatalog,
@@ -91,6 +93,7 @@ pub mod prelude {
     };
     pub use crate::operator::{Operator, OperatorResult};
     pub use crate::pie::PlayState;
+    pub use crate::runtime::{GameApp, GamePlugin, GameRegistered, GameRegistry, GameSystems};
     pub use crate::{
         ExtensionContext, ExtensionPoint, JackdawExtension, MenuEntryDescriptor, PanelContext,
         SectionBuildFn, WindowDescriptor, operator,

@@ -337,11 +337,11 @@ fn poll_install_task(
         Some(picked) => {
             let src = picked.path().to_path_buf();
             commands.queue(move |world: &mut World| {
-                let kind = handle_install(world, src);
-                if matches!(kind, Some(jackdaw_loader::LoadedKind::Game(_))) {
-                    info!("Auto-restarting jackdaw to activate the newly-installed game.");
-                    crate::restart::restart_jackdaw();
-                }
+                // load_from_path handles games in-process: if the
+                // name was already loaded, it runs the prior
+                // teardown first and then calls the new build.
+                // No restart needed.
+                let _ = handle_install(world, src);
             });
         }
         None => {
@@ -373,29 +373,28 @@ fn sync_status_text(
 /// try to live-load, and set an `InstallStatus` message describing
 /// the result.
 ///
-/// Returns the loaded kind on success so callers can decide whether
-/// a restart is needed to activate the dylib (games require it;
-/// extensions don't). Exposed so the scaffold flow
-/// (project_select.rs) can reuse the same code path the
-/// Build-from-folder button uses.
+/// Returns `Ok(kind)` on success or `Err(LoadError)` so callers
+/// can inspect the failure — notably
+/// `LoadError::is_symbol_mismatch()` for "SDK rebuilt, stale
+/// project cache" recovery.
 pub fn handle_install_from_path(
     world: &mut World,
     src: std::path::PathBuf,
-) -> Option<jackdaw_loader::LoadedKind> {
+) -> Result<jackdaw_loader::LoadedKind, jackdaw_loader::LoadError> {
     handle_install(world, src)
 }
 
 fn handle_install(
     world: &mut World,
     src: std::path::PathBuf,
-) -> Option<jackdaw_loader::LoadedKind> {
+) -> Result<jackdaw_loader::LoadedKind, jackdaw_loader::LoadError> {
     let target = classify_for_install(&src);
     let dest = match install_picked_file(&src, target) {
         Ok(d) => d,
         Err(err) => {
             warn!("Failed to install dylib: {err}");
             world.resource_mut::<InstallStatus>().message = Some(format!("Install failed: {err}"));
-            return None;
+            return Err(jackdaw_loader::LoadError::InstallIo(err.to_string()));
         }
     };
     info!("Installed dylib to {}", dest.display());
@@ -407,20 +406,22 @@ fn handle_install(
             format!("Loaded extension `{name}`. BEI keybinds (if any) activate on next restart.")
         }
         Ok(jackdaw_loader::LoadedKind::Game(name)) => {
-            info!(
-                "Registered game `{name}` from {}; systems will activate on restart.",
-                dest.display()
-            );
-            format!(
-                "Installed game `{name}`. Restarting jackdaw to activate it…",
-            )
+            info!("Game `{name}` loaded from {}", dest.display());
+            format!("Loaded game `{name}`.")
         }
         Err(err) => {
             warn!("Live-load failed for {}: {err}", dest.display());
-            format!(
-                "Installed to {}, but live-load failed: {err}. Restart the editor to retry.",
-                dest.display()
-            )
+            if err.is_symbol_mismatch() {
+                // Soft-fail: caller will detect this and run the
+                // auto-clean-and-retry recovery path. Don't update
+                // the install-status message — the retry UI owns it.
+                format!("SDK mismatch detected; cleaning project cache…")
+            } else {
+                format!(
+                    "Installed to {}, but live-load failed: {err}. Restart the editor to retry.",
+                    dest.display()
+                )
+            }
         }
     };
     world.resource_mut::<InstallStatus>().message = Some(msg);
@@ -435,7 +436,7 @@ fn handle_install(
         }
     }
 
-    result.ok()
+    result
 }
 
 /// Which directory under the user's config root a given dylib
