@@ -177,7 +177,7 @@ impl Plugin for TreeViewPlugin {
 }
 
 /// Keep TreeIndex in sync with TreeNode additions and removals.
-fn maintain_tree_index(
+pub fn maintain_tree_index(
     mut index: ResMut<TreeIndex>,
     added: Query<(Entity, &TreeNode), Added<TreeNode>>,
     mut removed: RemovedComponents<TreeNode>,

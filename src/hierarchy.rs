@@ -64,7 +64,6 @@ impl Plugin for HierarchyPlugin {
             .init_resource::<HierarchyShowAll>()
             .add_systems(Startup, setup_tree_node_expanded_watcher)
             .add_systems(OnEnter(crate::AppState::Editor), setup_name_watcher)
-            .add_observer(rebuild_hierarchy_on_container_added)
             .add_systems(
                 Update,
                 (
@@ -79,6 +78,11 @@ impl Plugin for HierarchyPlugin {
                     jackdaw_feathers::tree_view::tree_keyboard_navigation,
                 )
                     .run_if(in_state(crate::AppState::Editor)),
+            )
+            .add_systems(
+                PostUpdate,
+                rebuild_hierarchy_on_container_added
+                    .after(jackdaw_widgets::tree_view::maintain_tree_index),
             )
             .add_observer(handle_inline_rename_commit)
             .add_observer(on_root_entity_added)
@@ -159,11 +163,14 @@ fn spawn_single_tree_row(world: &mut World, source: Entity, parent_container: En
     tree_row_entity
 }
 
+// This has to be a system instead of an observer because it must run after `tree_view::maintain_tree_index`
 fn rebuild_hierarchy_on_container_added(
-    _trigger: On<Add, HierarchyTreeContainer>,
+    added: Query<Entity, Added<HierarchyTreeContainer>>,
     mut commands: Commands,
 ) {
-    commands.queue(rebuild_hierarchy);
+    if !added.is_empty() {
+        commands.queue(rebuild_hierarchy);
+    }
 }
 
 fn rebuild_hierarchy(world: &mut World) {
