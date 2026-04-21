@@ -669,7 +669,10 @@ pub(crate) fn spawn_component_display(
             TextColor(tokens::TEXT_SECONDARY),
             ChildOf(header),
             bevy::ui_widgets::observe(move |_: On<Pointer<Click>>, mut commands: Commands| {
-                commands.entity(entity).remove_by_id(component);
+                commands
+                    .entity(entity)
+                    .remove_by_id(component)
+                    .insert(InspectorDirty);
             }),
         ));
     }
