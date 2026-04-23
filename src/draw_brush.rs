@@ -231,12 +231,9 @@ const MIN_FOOTPRINT_SIZE: f32 = 0.01;
 const MIN_EXTRUDE_DEPTH: f32 = 0.01;
 const MIN_FRAGMENT_SIZE: f32 = 0.005;
 
-/// Stable identifier that persists across despawn/respawn cycles for undo/redo.
-///
-/// Reflect-registered so it survives the snapshot round-trip: undo serializes
-/// the scene via `AstSerializerProcessor` and respawns fresh entity IDs, so
-/// any selection restore logic that matches across undo must key off a
-/// component whose value is preserved through reflect — hence this one.
+/// Stable identifier that survives the snapshot round-trip (undo
+/// respawns fresh entity ids; selection is restored by matching
+/// on this).
 #[derive(Component, Clone, Copy, PartialEq, Eq, Hash, Debug, Reflect)]
 #[reflect(Component)]
 pub struct BrushStableId(u64);

@@ -18,53 +18,36 @@ use bevy::log::{info, warn};
 
 use crate::sdk_paths::SdkPaths;
 
-/// Default **static** extension template. Scaffolded projects
-/// compile plainly against `bevy` and don't need the SDK dylib.
-/// This is the recommended starting point while the dylib path
-/// stabilises.
-///
-/// Overridable via `JACKDAW_TEMPLATE_EXTENSION_STATIC_URL`.
+/// Static extension template. Overridable via
+/// `JACKDAW_TEMPLATE_EXTENSION_STATIC_URL`.
 pub const TEMPLATE_EXTENSION_STATIC_URL: &str =
     "https://github.com/jbuehler23/jackdaw_template_extension_static";
 
-/// Default **static** game template. See
-/// [`TEMPLATE_EXTENSION_STATIC_URL`] for rationale.
-///
-/// Overridable via `JACKDAW_TEMPLATE_GAME_STATIC_URL`.
+/// Static game template. Overridable via
+/// `JACKDAW_TEMPLATE_GAME_STATIC_URL`.
 pub const TEMPLATE_GAME_STATIC_URL: &str =
     "https://github.com/jbuehler23/jackdaw_template_game_static";
 
-/// Default **dylib** extension template. Produces a `cdylib` the
-/// editor can `dlopen` for hot-reload, but requires the editor be
-/// built with `--features dylib` so `libjackdaw_sdk` exists for
-/// the rustc wrapper to link against.
-///
-/// Overridable via `JACKDAW_TEMPLATE_EXTENSION_DYLIB_URL` (with
-/// a fallback to the legacy `JACKDAW_TEMPLATE_EXTENSION_URL`
-/// for backward compatibility).
+/// Dylib extension template. Overridable via
+/// `JACKDAW_TEMPLATE_EXTENSION_DYLIB_URL`, falling back to the legacy
+/// `JACKDAW_TEMPLATE_EXTENSION_URL`.
 pub const TEMPLATE_EXTENSION_DYLIB_URL: &str =
     "https://github.com/jbuehler23/jackdaw_template_extension";
 
-/// Default **dylib** game template. See
-/// [`TEMPLATE_EXTENSION_DYLIB_URL`] for rationale.
-///
-/// Overridable via `JACKDAW_TEMPLATE_GAME_DYLIB_URL` (with a
-/// fallback to the legacy `JACKDAW_TEMPLATE_GAME_URL`).
+/// Dylib game template. Overridable via
+/// `JACKDAW_TEMPLATE_GAME_DYLIB_URL`, falling back to the legacy
+/// `JACKDAW_TEMPLATE_GAME_URL`.
 pub const TEMPLATE_GAME_DYLIB_URL: &str =
     "https://github.com/jbuehler23/jackdaw_template_game";
 
-/// Whether the scaffolded project should use the static or
-/// dylib-based template variant. See the URL constants above
-/// for the operational difference.
+/// Which template variant the scaffolded project uses.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TemplateLinkage {
-    /// Plain `rlib`/`bin`-only crate. Builds against `bevy` with
-    /// no SDK dylib dependency. Recommended starting point.
+    /// Plain `rlib`/`bin` crate linking `jackdaw` directly.
     #[default]
     Static,
-    /// `cdylib` crate linked against `libjackdaw_sdk` so the
-    /// editor can hot-load it. Requires editor built with
-    /// `--features dylib`.
+    /// `cdylib` linked against `libjackdaw_sdk` for hot-reload.
+    /// Requires the editor built with `--features dylib`.
     Dylib,
 }
 
@@ -153,26 +136,13 @@ impl std::fmt::Display for ScaffoldError {
 impl std::error::Error for ScaffoldError {}
 
 /// Run `bevy new -t <template_url> --yes <name>` in `location`.
+/// Returns the absolute path to the scaffolded project root.
+/// Blocks until `bevy` exits; call from a worker thread.
 ///
-/// Returns the absolute path to the newly-scaffolded project root
-/// on success. Blocks until `bevy` exits; call from a worker
-/// thread or a task pool.
-///
-/// `linkage` controls whether the scaffolded project gets the
-/// rustc-wrapper-based `.cargo/config.toml`:
-///
-/// - [`TemplateLinkage::Dylib`]: write the wrapper config so
-///   cargo builds through `jackdaw-rustc-wrapper`, which rewrites
-///   `--extern bevy` at `libjackdaw_sdk` to keep TypeIds
-///   matching the editor.
-/// - [`TemplateLinkage::Static`]: skip the wrapper config. The
-///   static templates depend on `jackdaw` directly as a git
-///   dependency and build with plain `cargo`, no wrapper, no
-///   SDK dylib. Writing the wrapper config here would force
-///   rustc into `-C prefer-dynamic` and rewrite `bevy` to an
-///   SDK copy whose hash doesn't match the one cargo compiled
-///   for the static project, producing
-///   `can't find crate for jackdaw` at build time.
+/// For `Dylib` linkage, writes a `.cargo/config.toml` that routes
+/// cargo through `jackdaw-rustc-wrapper` so the scaffolded project
+/// links against `libjackdaw_sdk`. For `Static` linkage the config
+/// is not written; the project depends on `jackdaw` directly.
 pub fn scaffold_project(
     name: &str,
     location: &Path,

@@ -67,22 +67,13 @@ pub fn decorate_animatable_fields(
         if !is_animatable(&row.type_path, &row.field_path) {
             continue;
         }
-        // Two-entity structure: an absolutely-positioned wrapper node
-        // that takes care of where the diamond sits in the row, and a
-        // child button that carries the `AnimDiamondButton` marker
-        // plus the feathers `button()` bundle (which brings its own
-        // Node). Splitting it this way avoids the duplicate-Node
-        // panic that happens when you stack a custom Node alongside
-        // a bundle that already includes one.
+        // Two-entity split: absolutely-positioned wrapper +
+        // button-bundle child (the bundle ships its own Node, so
+        // stacking a custom Node alongside would double-insert).
         //
-        // Attachment uses `attach_or_despawn` rather than raw
-        // `ChildOf(..)` to handle the race where `row_entity` was
-        // added this frame (so `Added<InspectorFieldRow>` matches
-        // it) but a concurrent inspector rebuild (`on_inspector_dirty`
-        // / `remove_component_displays`) cascade-despawns it before
-        // these spawn commands drain. Raw `ChildOf` would then log
-        // the `ChildOf(Xv0) relates to an entity that does not exist`
-        // WARN we were seeing once per animatable row per brush draw.
+        // Attached via `attach_or_despawn` so concurrent inspector
+        // rebuilds that cascade-despawn `row_entity` this frame
+        // don't leave orphaned `ChildOf` relationships.
         let wrapper = commands
             .spawn((Node {
                 position_type: PositionType::Absolute,

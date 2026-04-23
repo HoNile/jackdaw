@@ -1977,13 +1977,9 @@ pub(crate) fn refresh_enum_variants(
     let Some(primary) = selection.primary() else {
         return;
     };
-    // An inspector rebuild is pending for the primary selection. Skip
-    // this polling cycle — its queued spawns would race the rebuild's
-    // cascade-despawn of the existing display subtree and produce
-    // `ChildOf(X) relates to an entity that does not exist` WARNs
-    // when our new spawns reference containers that get torn down in
-    // the same flush. The mismatch we'd catch this frame will be
-    // rebuilt from scratch by `on_inspector_dirty` anyway.
+    // Skip if an inspector rebuild is pending for the primary; its
+    // cascade-despawn would race our spawns and log `ChildOf(X)
+    // relates to an entity that does not exist` WARNs.
     if dirty_sources.contains(primary) {
         return;
     }

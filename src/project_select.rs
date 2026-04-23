@@ -43,7 +43,8 @@ impl Plugin for ProjectSelectPlugin {
             // at exit. `Last` has its own scope and doesn't clash.
             .add_systems(
                 Last,
-                apply_pending_install.run_if(in_state(AppState::ProjectSelect)),
+                (apply_pending_install, apply_pending_static_open)
+                    .run_if(in_state(AppState::ProjectSelect)),
             );
     }
 }
@@ -132,9 +133,8 @@ struct NewProjectState {
     /// Which preset the user opened the dialog with. `None` when
     /// the modal isn't open.
     preset: Option<TemplatePreset>,
-    /// Static vs dylib template choice. Defaults to Static (the
-    /// currently-stable path); only meaningful for the Extension
-    /// and Game presets — Custom pastes its own URL.
+    /// Static vs dylib template choice. Ignored when `preset` is
+    /// `Custom` (the user pastes a raw URL).
     linkage: TemplateLinkage,
     /// Parent directory the new project will be placed under.
     /// Scaffolder produces `location/name/`.
@@ -168,6 +168,9 @@ struct NewProjectState {
     /// `Update` schedule by the game's `GameApp::add_systems` don't
     /// collide with `Update`'s active `schedule_scope`).
     pending_install: Option<PathBuf>,
+    /// Static scaffold whose pre-build finished. Picked up in `Last`
+    /// by `apply_pending_static_open`, which calls `enter_project`.
+    pending_static_open: Option<PathBuf>,
     /// Shared progress sink the build task writes to. The
     /// `refresh_build_progress_ui` system reads a snapshot from
     /// here each frame and copies it into `build_progress_snapshot`
@@ -638,10 +641,12 @@ pub fn enter_project_with(world: &mut World, root: PathBuf, skip_build: bool) {
 
     let root_for_task = root;
     let progress_for_task = std::sync::Arc::clone(&progress);
+    // Non-cdylib projects took the early-out in `enter_project_with`.
     let task = AsyncComputeTaskPool::get().spawn(async move {
         crate::ext_build::build_extension_project_with_progress(
             &root_for_task,
             Some(progress_for_task),
+            TemplateLinkage::Dylib,
         )
     });
     world.resource_mut::<NewProjectState>().build_task = Some(task);
@@ -681,14 +686,13 @@ fn transition_to_editor(world: &mut World, root: PathBuf) {
     let mut next_state = world.resource_mut::<NextState<AppState>>();
     next_state.set(AppState::Editor);
 
-    // Intentionally no scene auto-load here. Once a project has
-    // multiple `.jsn` scenes, auto-loading a conventional path
-    // would be confusing ("why is jackdaw showing me this one?").
-    // Users open scenes explicitly via **File → Open** or via the
-    // asset-browser panel. Last-opened-scene persistence per
-    // project is tracked as a follow-up so users don't have to
-    // re-pick on every open; until then the editor opens empty
-    // after transition.
+    // Convention: auto-load `assets/scene.jsn` if present. The game
+    // template ships one so scaffolded projects open populated.
+    // Per-project last-opened-scene persistence is a follow-up.
+    let scene_path = root.join("assets").join("scene.jsn");
+    if scene_path.is_file() {
+        crate::scene_io::load_scene_from_file(world, &scene_path);
+    }
 }
 
 /// Spawn a pill-style button inside the "+ New Extension / + New
@@ -749,13 +753,9 @@ fn spawn_new_project_button(
         });
 }
 
-/// Spawn one segmented button in the Static/Dylib linkage selector.
-///
-/// `initial` is the linkage that was active when the modal opened —
-/// used to draw the button in its selected visual state on first
-/// render. After the first click, the system polls
-/// [`NewProjectState::linkage`] each frame via
-/// [`refresh_linkage_buttons`] and repaints all buttons accordingly.
+/// Spawn one segment of the Static/Dylib selector. `initial` picks
+/// the starting highlighted button; subsequent clicks repaint via
+/// `on_linkage_button_click`.
 fn spawn_linkage_button(
     world: &mut World,
     parent: Entity,
@@ -803,6 +803,8 @@ fn spawn_linkage_button(
         ))
         .id();
 
+    // Hover and out handlers skip the currently-selected button so
+    // its highlight isn't clobbered by hover/idle paints.
     world
         .entity_mut(button)
         .observe(on_linkage_button_click)
@@ -811,9 +813,6 @@ fn spawn_linkage_button(
              buttons: Query<&NewProjectLinkageButton>,
              state: Res<NewProjectState>,
              mut bg: Query<&mut BackgroundColor>| {
-                // Only repaint the hover background when the button
-                // isn't already the selected one — otherwise we'd
-                // briefly lose the selected highlight on cursor-over.
                 let Ok(button) = buttons.get(hover.event_target()) else {
                     return;
                 };
@@ -833,8 +832,6 @@ fn spawn_linkage_button(
                 let Ok(button) = buttons.get(out.event_target()) else {
                     return;
                 };
-                // Restore the idle colour only for non-selected
-                // buttons; the selected one keeps its highlight.
                 if button.0 == state.linkage {
                     return;
                 }
@@ -861,10 +858,9 @@ fn on_linkage_button_click(
     };
     let linkage = button.0;
     commands.queue(move |world: &mut World| {
-        // Update the canonical state.
         world.resource_mut::<NewProjectState>().linkage = linkage;
 
-        // Repaint all linkage buttons to reflect the new selection.
+        // Repaint every linkage button against the new selection.
         let mut repaint: Vec<(Entity, bool)> = Vec::new();
         {
             let mut q = world.query::<(Entity, &NewProjectLinkageButton)>();
@@ -889,10 +885,6 @@ fn on_linkage_button_click(
             }
         }
 
-        // Rewrite the Template URL input with the new preset URL
-        // for the active preset+linkage. If the preset is Custom
-        // (which doesn't render a linkage selector) we won't reach
-        // this path, but fall through as a no-op just in case.
         let Some(preset) = world.resource::<NewProjectState>().preset.clone() else {
             return;
         };
@@ -901,10 +893,7 @@ fn on_linkage_button_click(
     });
 }
 
-/// Push a new value into the Template URL text input — finds the
-/// `NewProjectTemplateInput` outer, walks to the inner text-input
-/// entity, and queues a `TextInputQueue` update, the same way
-/// `refresh_name_field` syncs the Name field.
+/// Push a new string into the Template URL text input.
 fn set_template_input_text(world: &mut World, new_text: String) {
     use jackdaw_feathers::text_edit::{TextInputQueue, set_text_input_value};
 
@@ -959,6 +948,9 @@ pub fn close_new_project_modal(world: &mut World) {
     state.folder_task = None;
     state.scaffold_task = None;
     state.status = None;
+    // `pending_static_open` is already drained by
+    // `apply_pending_static_open` on the happy path, and isn't set
+    // on cancel.
 }
 
 /// Lightweight modal shown while `enter_project_with` builds an
@@ -1252,14 +1244,8 @@ pub fn open_new_project_modal(world: &mut World, preset: TemplatePreset) {
         .id();
     world.entity_mut(browse).observe(on_browse_new_location);
 
-    // Linkage selector — only shown for the Extension and Game
-    // presets. Custom pastes its own URL, so a segmented control
-    // wouldn't have anything meaningful to flip between.
-    //
-    // The Static button starts pre-selected to match the default
-    // in `NewProjectState::linkage`; clicking either button updates
-    // the resource AND rewrites the Template text input below so the
-    // user sees the URL change in place.
+    // Linkage selector only appears for the Extension and Game
+    // presets; Custom pastes its own URL.
     if preset.supports_linkage_selector() {
         world.spawn((
             Text::new("Template type"),
@@ -1301,9 +1287,8 @@ pub fn open_new_project_modal(world: &mut World, preset: TemplatePreset) {
         );
     }
 
-    // Template URL field — prefilled from the preset+linkage so
-    // Extension / Game paths don't require typing, and editable so
-    // power users can point at their own templates.
+    // Template URL field. Prefilled from preset+linkage, editable
+    // so power users can point at a fork or custom template.
     world.spawn((
         Text::new("Template"),
         TextFont {
@@ -1576,46 +1561,29 @@ fn poll_new_project_tasks(
                         .unwrap_or("project")
                         .to_owned();
 
-                    // Static scaffolds are standalone cargo projects
-                    // (bin + optional lib). They're not extension
-                    // cdylibs to install into this editor instance;
-                    // the user runs `cargo run` in the scaffolded dir
-                    // to launch their own editor-plus-game binary.
-                    // The dylib auto-build-and-install flow below would
-                    // just error out because the wrapper rewrites bevy
-                    // to the SDK dylib whose hash doesn't match what
-                    // cargo compiled for the fresh project (same cause
-                    // as the post-scaffold `can't find crate for jackdaw`
-                    // error when the wrapper was left on).
-                    if matches!(state.linkage, TemplateLinkage::Static) {
-                        state.status = Some(format!(
-                            "Scaffolded `{project_name}` at {}. Run `cargo run` in that directory.",
-                            project_path.display()
-                        ));
-                    } else {
-                        // Dylib path: chain the first build with live
-                        // progress surfacing. The scaffold modal is
-                        // already open and will render the bar + log
-                        // tail each frame.
-                        state.status = Some(format!("Building `{project_name}`…"));
-                        state.pending_project = Some(project_path.clone());
+                    // Both linkages kick off `cargo build` with the
+                    // same progress stream. Post-build: dylib installs
+                    // the cdylib, static opens the project in place.
+                    state.status = Some(format!("Building `{project_name}`…"));
+                    state.pending_project = Some(project_path.clone());
 
-                        let progress = std::sync::Arc::new(std::sync::Mutex::new(
-                            crate::ext_build::BuildProgress::default(),
-                        ));
-                        state.build_progress = Some(std::sync::Arc::clone(&progress));
-                        state.build_progress_snapshot =
-                            Some(crate::ext_build::BuildProgress::default());
+                    let progress = std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::ext_build::BuildProgress::default(),
+                    ));
+                    state.build_progress = Some(std::sync::Arc::clone(&progress));
+                    state.build_progress_snapshot =
+                        Some(crate::ext_build::BuildProgress::default());
 
-                        let project_for_task = project_path;
-                        let progress_for_task = std::sync::Arc::clone(&progress);
-                        state.build_task = Some(AsyncComputeTaskPool::get().spawn(async move {
-                            crate::ext_build::build_extension_project_with_progress(
-                                &project_for_task,
-                                Some(progress_for_task),
-                            )
-                        }));
-                    }
+                    let project_for_task = project_path;
+                    let progress_for_task = std::sync::Arc::clone(&progress);
+                    let linkage = state.linkage;
+                    state.build_task = Some(AsyncComputeTaskPool::get().spawn(async move {
+                        crate::ext_build::build_extension_project_with_progress(
+                            &project_for_task,
+                            Some(progress_for_task),
+                            linkage,
+                        )
+                    }));
                 }
                 Err(err) => {
                     warn!("Scaffold failed: {err}");
@@ -1625,26 +1593,31 @@ fn poll_new_project_tasks(
         }
     }
 
-    // Build task completed (used by both scaffold-then-build and
-    // open-then-build). Install the produced `.so`, transition to
-    // the editor, or — on an SDK-symbol-mismatch — kick off the
-    // auto-recovery path: cargo clean -p <crate> then re-build.
+    // Build task completed. Dylib: stash the artifact for the
+    // install-in-Last step (which also drives the SDK-mismatch
+    // auto-recovery). Static: stash the project dir for
+    // `apply_pending_static_open`, which calls `enter_project`.
     if let Some(task) = state.build_task.as_mut() {
         if let Some(result) = future::block_on(future::poll_once(task)) {
             state.build_task = None;
+            let linkage = state.linkage;
             match result {
-                Ok(artifact) => {
-                    info!("Build produced {}", artifact.display());
-                    // Stash for `apply_pending_install` (Last
-                    // schedule). Setting up the outcome tunnel
-                    // still, so the install's result feeds back
-                    // into our auto-recovery path.
-                    let outcome: std::sync::Arc<
-                        std::sync::Mutex<Option<Result<(), jackdaw_loader::LoadError>>>,
-                    > = std::sync::Arc::new(std::sync::Mutex::new(None));
-                    state.metadata_outcome = Some(outcome);
-                    state.pending_install = Some(artifact);
-                }
+                Ok(artifact_or_project) => match linkage {
+                    TemplateLinkage::Dylib => {
+                        info!("Build produced {}", artifact_or_project.display());
+                        let outcome: std::sync::Arc<
+                            std::sync::Mutex<Option<Result<(), jackdaw_loader::LoadError>>>,
+                        > = std::sync::Arc::new(std::sync::Mutex::new(None));
+                        state.metadata_outcome = Some(outcome);
+                        state.pending_install = Some(artifact_or_project);
+                    }
+                    TemplateLinkage::Static => {
+                        info!("Static build succeeded: {}", artifact_or_project.display());
+                        state.pending_static_open = Some(artifact_or_project);
+                        state.pending_project = None;
+                        state.retry_attempted = false;
+                    }
+                },
                 Err(err) => {
                     warn!("Build failed: {err}");
                     state.status = Some(format!(
@@ -1727,10 +1700,12 @@ fn poll_new_project_tasks(
 
                     let project_for_task = project;
                     let progress_for_task = std::sync::Arc::clone(&progress);
+                    // SDK symbol mismatch is a dylib-only failure mode.
                     state.build_task = Some(AsyncComputeTaskPool::get().spawn(async move {
                         crate::ext_build::build_extension_project_with_progress(
                             &project_for_task,
                             Some(progress_for_task),
+                            TemplateLinkage::Dylib,
                         )
                     }));
                 }
@@ -1907,4 +1882,19 @@ fn apply_pending_install(world: &mut World) {
             transition_to_editor(world, p);
         }
     }
+}
+
+/// Static-scaffold sibling of [`apply_pending_install`]. Runs in
+/// `Last` and hands off to `enter_project`, which opens the fresh
+/// project directly (non-cdylib, so no second build).
+fn apply_pending_static_open(world: &mut World) {
+    let project = world
+        .resource_mut::<NewProjectState>()
+        .pending_static_open
+        .take();
+    let Some(project) = project else {
+        return;
+    };
+    close_new_project_modal(world);
+    enter_project(world, project);
 }

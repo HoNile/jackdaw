@@ -481,11 +481,8 @@ fn refresh_browser_on_change(
                         });
                     } else {
                         // 2D texture: apply to faces via operator.
-                        // User-driven thumbnail click — explicit
-                        // history opt-in since the `CallOperatorSettings`
-                        // default is `false` (nested operator calls
-                        // shouldn't push history; only user-facing
-                        // dispatchers opt in).
+                        // User-facing click so history opt-in is
+                        // explicit (the default is `false`).
                         commands
                             .operator("material.apply_texture")
                             .param("path", click_path.clone())
@@ -729,9 +726,7 @@ fn handle_file_double_click(
             .is_some_and(|e| e.eq_ignore_ascii_case("ktx2"))
             && is_ktx2_non_2d(p);
         if !is_non_2d {
-            // User-driven file double-click — opt in to history (see
-            // `CallOperatorSettings`' docstring for why the default is
-            // `false`).
+            // User-facing click: explicit history opt-in.
             commands
                 .operator("material.apply_texture")
                 .param("path", event.path.clone())
@@ -1212,8 +1207,7 @@ fn update_preview_panel(
         commands
             .entity(apply_btn)
             .observe(move |_: On<Pointer<Click>>, mut commands: Commands| {
-                // Preview-panel Apply button — user-driven click, opt
-                // in to history explicitly (default is `false`).
+                // User-facing click: explicit history opt-in.
                 commands
                     .operator("material.apply_texture")
                     .param("path", path_str.clone())

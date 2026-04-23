@@ -116,14 +116,8 @@ impl EditorCommand for SetBrush {
             *brush = self.new.clone();
         }
         sync_brush_to_ast(world, self.entity, &self.new);
-        // Mutating the Brush component in place changes the material
-        // summary / face list the inspector shows, but the existing
-        // Brush display was built once at selection time and has no
-        // reactive-refresh system of its own (unlike Transform's
-        // numeric fields and Name, which poll every frame). Without
-        // this flag, undo/redo of a brush edit leaves the inspector
-        // stuck on the pre-change snapshot until the user manually
-        // deselect+reselects.
+        // The Brush display has no reactive refresh; flag the
+        // inspector so it rebuilds against the new face data.
         if let Ok(mut ec) = world.get_entity_mut(self.entity) {
             ec.insert(crate::inspector::InspectorDirty);
         }

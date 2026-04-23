@@ -71,14 +71,10 @@ pub(crate) fn handle_viewport_click(
     mut commands: Commands,
     mut ray_cast: MeshRayCast,
     (mut group_edit, mut last_click, time): (ResMut<GroupEditState>, ResMut<LastClick>, Res<Time>),
-    // Tracks whether a draw-brush modal was active on the previous frame.
-    // `draw_brush.confirm` clears `draw_state.active` inline, so by the time
-    // this system runs on the same mouse-press that fired the confirm, the
-    // `guards.draw_state.active` check below would already pass — and a
-    // raycast-miss would then call `selection.clear()`, stripping `Selected`
-    // from the freshly-spawned brush. The Local bridges one frame: if a draw
-    // was active last frame but isn't now, the click that triggered the
-    // confirm also triggered us, and we must bail.
+    // One-frame memory of `draw_state.active`. `draw_brush.confirm` clears
+    // the state inline before this system runs, so the same mouse-press
+    // would otherwise fall through to `selection.clear()` and strip
+    // `Selected` from the just-spawned brush.
     mut was_drawing: Local<bool>,
 ) {
     let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);

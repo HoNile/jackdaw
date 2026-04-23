@@ -198,18 +198,9 @@ impl<'w, 's> OperatorCommandsExt<'w, 's> for Commands<'w, 's> {
 #[derive(Clone, Debug, Copy)]
 pub struct CallOperatorSettings {
     /// Whether a successful call should push an undo entry. Default
-    /// `false` — custom operators routinely invoke builtin operators
-    /// as part of their implementation, and those nested calls must
-    /// not spam the undo stack. Callers that represent a genuine
-    /// user-driven edit (keybind observers, menu items, toolbar
-    /// buttons) opt in explicitly by setting this to `true`.
-    ///
-    /// The central user-facing dispatchers in this repo already opt
-    /// in: the BEI `Fire<O>` observer at
-    /// `crates/jackdaw_api_internal/src/lib.rs` around line 347, the
-    /// menu dispatcher in `src/lib.rs:handle_menu_action`, the
-    /// context-menu dispatcher in `src/hierarchy.rs:on_context_menu_action`,
-    /// and the toolbar-button dispatcher in `src/layout.rs`.
+    /// `false` so that nested operator calls inside a custom op don't
+    /// spam the undo stack. User-facing dispatchers (keybinds, menu,
+    /// toolbar) set this to `true` explicitly.
     pub creates_history_entry: bool,
     pub execution_context: ExecutionContext,
 }
