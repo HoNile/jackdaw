@@ -85,6 +85,22 @@ impl Plugin for DockDragPlugin {
     }
 }
 
+fn logical_rect(computed: &ComputedNode, transform: &UiGlobalTransform) -> (Vec2, Vec2) {
+    let inv = computed.inverse_scale_factor();
+    let size = computed.size() * inv;
+    let (_scale, _angle, center) = transform.to_scale_angle_translation();
+    let center = center.trunc() * inv;
+    let top_left = center - size * 0.5;
+    (top_left, size)
+}
+
+fn point_in_rect(point: Vec2, top_left: Vec2, size: Vec2) -> bool {
+    point.x >= top_left.x
+        && point.x <= top_left.x + size.x
+        && point.y >= top_left.y
+        && point.y <= top_left.y + size.y
+}
+
 fn on_tab_drag_start(
     trigger: On<Pointer<DragStart>>,
     tabs: Query<&DockTab>,
@@ -289,35 +305,35 @@ fn on_drag_move(
             let mut new_overlay = None;
 
             for (tab_row_entity, computed, node, ui_transform, children, parent) in &tab_rows {
-                if !computed.contains_point(*ui_transform, cursor)
-                    && !node_query.get(parent.0).is_ok_and(|(computed, transform)| {
-                        computed.contains_point(*transform, cursor)
-                    })
-                {
+                let (row_top_left, row_size) = logical_rect(computed, ui_transform);
+                let parent_contains =
+                    node_query
+                        .get(parent.0)
+                        .is_ok_and(|(parent_computed, parent_transform)| {
+                            let (parent_top_left, parent_size) =
+                                logical_rect(parent_computed, parent_transform);
+                            point_in_rect(cursor, parent_top_left, parent_size)
+                        });
+                if !point_in_rect(cursor, row_top_left, row_size) && !parent_contains {
                     continue;
                 }
-
-                let mut closest_child: Option<(&UiGlobalTransform, &ComputedNode, usize, f32)> =
-                    None;
-
+                let mut closest_child: Option<(Vec2, Vec2, usize, f32)> = None;
                 for (index, child) in children.iter().enumerate() {
-                    let Ok((child_computed, child_transform)) = node_query.get(child) else {
+                    let Ok((child_computed, _child_transform)) = node_query.get(child) else {
                         continue;
                     };
-
-                    let distance = child_transform.translation.distance_squared(cursor);
-
+                    let (_scale, _angle, center) = ui_transform.to_scale_angle_translation();
+                    let child_center = center.trunc() * computed.inverse_scale_factor();
+                    let child_size = child_computed.size() * child_computed.inverse_scale_factor();
+                    let distance = child_center.distance_squared(cursor);
                     if closest_child.is_none_or(|(_, _, _, closest_dist)| distance < closest_dist) {
-                        closest_child = Some((child_transform, child_computed, index, distance));
+                        closest_child = Some((child_center, child_size, index, distance));
                     }
                 }
-
-                let Some((child_transform, child_computed, mut index, _)) = closest_child else {
+                let Some((child_center, child_size, mut index, _)) = closest_child else {
                     continue;
                 };
-
-                let (is_far_side, is_vertical) =
-                    is_far_side(cursor, child_transform.translation, node);
+                let (is_far_side, is_vertical) = is_far_side(cursor, child_center, node);
                 if is_far_side {
                     index += 1;
                 }
@@ -327,7 +343,6 @@ fn on_drag_move(
                     index,
                 });
 
-                let child_size = child_computed.size();
                 let size_mult = if !is_vertical {
                     Vec2::new(0.5, 1.0)
                 } else {
@@ -351,8 +366,7 @@ fn on_drag_move(
                         offset.y = 0.0;
                     }
                 }
-
-                let overlay_pos = child_transform.translation + offset;
+                let overlay_pos = child_center + offset;
 
                 let overlay = commands
                     .spawn((
@@ -379,14 +393,10 @@ fn on_drag_move(
 
             if new_target.is_none() {
                 for (area_entity, computed, ui_transform) in &areas {
-                    if !computed.contains_point(*ui_transform, cursor) {
+                    let (top_left, size) = logical_rect(computed, ui_transform);
+                    if !point_in_rect(cursor, top_left, size) {
                         continue;
                     }
-
-                    let size = computed.size() * computed.inverse_scale_factor();
-                    let (_scale, _angle, center) = ui_transform.to_scale_angle_translation();
-                    let top_left = center - size / 2.0;
-
                     let rel = cursor - top_left;
                     let frac_x = rel.x / size.x;
                     let frac_y = rel.y / size.y;
@@ -462,14 +472,10 @@ fn on_drag_move(
             // re-populate a collapsed side panel.
             if new_target.is_none() {
                 for (computed, ui_transform) in &viewports {
-                    if !computed.contains_point(*ui_transform, cursor) {
+                    let (top_left, size) = logical_rect(computed, ui_transform);
+                    if !point_in_rect(cursor, top_left, size) {
                         continue;
                     }
-
-                    let size = computed.size() * computed.inverse_scale_factor();
-                    let (_scale, _angle, center) = ui_transform.to_scale_angle_translation();
-                    let top_left = center - size / 2.0;
-
                     let rel = cursor - top_left;
                     let frac_x = rel.x / size.x;
                     let frac_y = rel.y / size.y;
