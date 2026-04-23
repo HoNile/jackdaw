@@ -3,9 +3,9 @@
 //! The editor's **New Project** flow creates a fresh extension or
 //! game project by shelling out to `bevy new -t <URL> --yes
 //! <NAME>`. Templates live in their own GitHub repos (see
-//! [`TEMPLATE_EXTENSION_URL`] / [`TEMPLATE_GAME_URL`]) so the
-//! jackdaw binary itself carries no template files — users always
-//! pull the latest version at scaffold time.
+//! [`TEMPLATE_EXTENSION_STATIC_URL`] / [`TEMPLATE_GAME_STATIC_URL`]
+//! and the Dylib counterparts) so the jackdaw binary itself carries
+//! no template files; users always pull the latest at scaffold time.
 //!
 //! Call [`scaffold_project`] from a worker thread (it spawns
 //! `bevy` and blocks until the subprocess exits). The UI wires
@@ -18,17 +18,41 @@ use bevy::log::{info, warn};
 
 use crate::sdk_paths::SdkPaths;
 
-/// Default template for **File → New Project → Extension**.
-/// Overridable via the `JACKDAW_TEMPLATE_EXTENSION_URL` env var
-/// for dev / testing.
-pub const TEMPLATE_EXTENSION_URL: &str = "https://github.com/jbuehler23/jackdaw_template_extension";
+/// Static extension template. Overridable via
+/// `JACKDAW_TEMPLATE_EXTENSION_STATIC_URL`.
+pub const TEMPLATE_EXTENSION_STATIC_URL: &str =
+    "https://github.com/jbuehler23/jackdaw_template_extension_static";
 
-/// Default template for **File → New Project → Game**.
-/// Overridable via the `JACKDAW_TEMPLATE_GAME_URL` env var.
-pub const TEMPLATE_GAME_URL: &str = "https://github.com/jbuehler23/jackdaw_template_game";
+/// Static game template. Overridable via
+/// `JACKDAW_TEMPLATE_GAME_STATIC_URL`.
+pub const TEMPLATE_GAME_STATIC_URL: &str =
+    "https://github.com/jbuehler23/jackdaw_template_game_static";
 
-/// Which template the user chose. `Custom` lets them paste any
-/// Bevy-CLI-compatible URL.
+/// Dylib extension template. Overridable via
+/// `JACKDAW_TEMPLATE_EXTENSION_DYLIB_URL`, falling back to the legacy
+/// `JACKDAW_TEMPLATE_EXTENSION_URL`.
+pub const TEMPLATE_EXTENSION_DYLIB_URL: &str =
+    "https://github.com/jbuehler23/jackdaw_template_extension";
+
+/// Dylib game template. Overridable via
+/// `JACKDAW_TEMPLATE_GAME_DYLIB_URL`, falling back to the legacy
+/// `JACKDAW_TEMPLATE_GAME_URL`.
+pub const TEMPLATE_GAME_DYLIB_URL: &str = "https://github.com/jbuehler23/jackdaw_template_game";
+
+/// Which template variant the scaffolded project uses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TemplateLinkage {
+    /// Plain `rlib`/`bin` crate linking `jackdaw` directly.
+    #[default]
+    Static,
+    /// `cdylib` linked against `libjackdaw_sdk` for hot-reload.
+    /// Requires the editor built with `--features dylib`.
+    Dylib,
+}
+
+/// Which template preset the user opened the scaffolder with.
+/// `Custom` bypasses the preset→URL mapping and lets the user
+/// paste any Bevy-CLI-compatible URL.
 #[derive(Clone, Debug)]
 pub enum TemplatePreset {
     Extension,
@@ -37,16 +61,33 @@ pub enum TemplatePreset {
 }
 
 impl TemplatePreset {
-    /// Resolve the preset to a concrete URL, consulting env vars
-    /// for the built-in presets.
-    pub fn url(&self) -> String {
+    /// Resolve the preset to a concrete URL for the given linkage,
+    /// consulting env vars for the built-in presets. `Custom` ignores
+    /// `linkage` (the URL is whatever the user pasted).
+    pub fn url(&self, linkage: TemplateLinkage) -> String {
         match self {
-            Self::Extension => std::env::var("JACKDAW_TEMPLATE_EXTENSION_URL")
-                .unwrap_or_else(|_| TEMPLATE_EXTENSION_URL.to_string()),
-            Self::Game => std::env::var("JACKDAW_TEMPLATE_GAME_URL")
-                .unwrap_or_else(|_| TEMPLATE_GAME_URL.to_string()),
+            Self::Extension => match linkage {
+                TemplateLinkage::Static => std::env::var("JACKDAW_TEMPLATE_EXTENSION_STATIC_URL")
+                    .unwrap_or_else(|_| TEMPLATE_EXTENSION_STATIC_URL.to_string()),
+                TemplateLinkage::Dylib => std::env::var("JACKDAW_TEMPLATE_EXTENSION_DYLIB_URL")
+                    .or_else(|_| std::env::var("JACKDAW_TEMPLATE_EXTENSION_URL"))
+                    .unwrap_or_else(|_| TEMPLATE_EXTENSION_DYLIB_URL.to_string()),
+            },
+            Self::Game => match linkage {
+                TemplateLinkage::Static => std::env::var("JACKDAW_TEMPLATE_GAME_STATIC_URL")
+                    .unwrap_or_else(|_| TEMPLATE_GAME_STATIC_URL.to_string()),
+                TemplateLinkage::Dylib => std::env::var("JACKDAW_TEMPLATE_GAME_DYLIB_URL")
+                    .or_else(|_| std::env::var("JACKDAW_TEMPLATE_GAME_URL"))
+                    .unwrap_or_else(|_| TEMPLATE_GAME_DYLIB_URL.to_string()),
+            },
             Self::Custom(url) => url.clone(),
         }
+    }
+
+    /// `true` for the two presets that have Static/Dylib variants
+    /// (so the UI knows whether to show the linkage selector).
+    pub fn supports_linkage_selector(&self) -> bool {
+        matches!(self, Self::Extension | Self::Game)
     }
 }
 
@@ -94,14 +135,18 @@ impl std::fmt::Display for ScaffoldError {
 impl std::error::Error for ScaffoldError {}
 
 /// Run `bevy new -t <template_url> --yes <name>` in `location`.
+/// Returns the absolute path to the scaffolded project root.
+/// Blocks until `bevy` exits; call from a worker thread.
 ///
-/// Returns the absolute path to the newly-scaffolded project root
-/// on success. Blocks until `bevy` exits — call from a worker
-/// thread or a task pool.
+/// For `Dylib` linkage, writes a `.cargo/config.toml` that routes
+/// cargo through `jackdaw-rustc-wrapper` so the scaffolded project
+/// links against `libjackdaw_sdk`. For `Static` linkage the config
+/// is not written; the project depends on `jackdaw` directly.
 pub fn scaffold_project(
     name: &str,
     location: &Path,
     template_url: &str,
+    linkage: TemplateLinkage,
 ) -> Result<PathBuf, ScaffoldError> {
     if name.is_empty()
         || !name
@@ -141,7 +186,9 @@ pub fn scaffold_project(
 
     // `bevy new` is consistent about where it drops the project:
     // `<location>/<name>/`. Trust that and return.
-    write_cargo_config(&project_path);
+    if matches!(linkage, TemplateLinkage::Dylib) {
+        write_cargo_config(&project_path);
+    }
     Ok(project_path)
 }
 

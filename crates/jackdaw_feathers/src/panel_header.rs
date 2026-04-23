@@ -287,7 +287,7 @@ fn setup_panel_tab_bars(
             .add_children(&right_children)
             .id();
 
-        commands.entity(entity).add_children(&[tab_row, right_row]);
+        crate::utils::attach_children_or_despawn(&mut commands, entity, &[tab_row, right_row]);
 
         // Remove the setup component
         commands.entity(entity).remove::<PanelTabBarSetup>();

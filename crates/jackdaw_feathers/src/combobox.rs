@@ -200,45 +200,58 @@ fn setup_combobox(
         }
         config.initialized = true;
 
-        let trigger_entity = match config.style {
-            ComboBoxStyle::IconOnly => commands
-                .spawn((
-                    ComboBoxTrigger(entity),
-                    icon_button(
-                        IconButtonProps::new(Icon::Ellipsis).variant(ButtonVariant::Ghost),
-                        &icon_font.0,
-                    ),
-                ))
-                .id(),
-            ComboBoxStyle::Default => {
-                let selected_option = config.options.get(config.selected);
-                let label = config
-                    .label_override
-                    .clone()
-                    .or_else(|| selected_option.map(|o| o.label.clone()))
-                    .unwrap_or_default();
-                let selected_icon = selected_option.and_then(|o| o.icon);
-
-                let mut button_props = ButtonProps::new(label)
-                    .with_size(ButtonSize::MD)
-                    .align_left()
-                    .with_right_icon(Icon::ChevronDown);
-
-                if let Some(icon) = selected_icon {
-                    button_props = button_props.with_left_icon(icon);
+        // The previous flow spawned the trigger via `commands.spawn`,
+        // then best-effort attached it as a child of `entity` with
+        // `commands.get_entity(entity).add_child(...)`. `get_entity`
+        // only guards at *queue* time, not flush time — if the
+        // combobox was cascade-despawned before the spawn + add_child
+        // commands drained, the trigger ended up orphaned with a
+        // `ChildOf` pointing at a dead parent, producing the
+        // `Entity despawned … is invalid` errors. Wrap the whole
+        // setup in a queued closure that runs with `&mut World`, do
+        // a single synchronous liveness check, and spawn the trigger
+        // inside `with_children` so parent + child land atomically.
+        let style = config.style;
+        let icon_font_handle = icon_font.0.clone();
+        let selected_option = config.options.get(config.selected).cloned();
+        let label_override = config.label_override.clone();
+        commands.queue(move |world: &mut World| {
+            let Ok(mut ec) = world.get_entity_mut(entity) else {
+                return;
+            };
+            match style {
+                ComboBoxStyle::IconOnly => {
+                    ec.with_children(|parent| {
+                        parent.spawn((
+                            ComboBoxTrigger(entity),
+                            icon_button(
+                                IconButtonProps::new(Icon::Ellipsis).variant(ButtonVariant::Ghost),
+                                &icon_font_handle,
+                            ),
+                        ));
+                    });
                 }
+                ComboBoxStyle::Default => {
+                    let label = label_override
+                        .or_else(|| selected_option.as_ref().map(|o| o.label.clone()))
+                        .unwrap_or_default();
+                    let selected_icon = selected_option.and_then(|o| o.icon);
 
-                commands
-                    .spawn((ComboBoxTrigger(entity), button(button_props)))
-                    .id()
+                    let mut button_props = ButtonProps::new(label)
+                        .with_size(ButtonSize::MD)
+                        .align_left()
+                        .with_right_icon(Icon::ChevronDown);
+
+                    if let Some(icon) = selected_icon {
+                        button_props = button_props.with_left_icon(icon);
+                    }
+
+                    ec.with_children(|parent| {
+                        parent.spawn((ComboBoxTrigger(entity), button(button_props)));
+                    });
+                }
             }
-        };
-
-        if let Ok(mut ec) = commands.get_entity(entity) {
-            ec.add_child(trigger_entity);
-        } else {
-            commands.entity(trigger_entity).despawn();
-        }
+        });
     }
 }
 

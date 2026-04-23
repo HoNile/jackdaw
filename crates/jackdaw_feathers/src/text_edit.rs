@@ -327,7 +327,7 @@ fn setup_text_edit_input(
                     TextColor(TEXT_MUTED_COLOR.into()),
                 ))
                 .id();
-            commands.entity(entity).add_child(label_entity);
+            crate::utils::attach_or_despawn(&mut commands, entity, label_entity);
         }
 
         let is_numeric = config.variant.is_numeric();
@@ -402,9 +402,12 @@ fn setup_text_edit_input(
             )
             .id();
 
-        // FIXME: in some situations, `entity` will already be despawned for some reason,
-        // causing an error here.
-        commands.entity(entity).add_child(wrapper_entity);
+        // `entity` can be cascade-despawned by an inspector rebuild
+        // between the `commands.spawn` of `wrapper_entity` above and
+        // this `add_child` flushing; `attach_or_despawn` either
+        // attaches cleanly or despawns the orphaned wrapper so no
+        // stray UI node ends up at the window root.
+        crate::utils::attach_or_despawn(&mut commands, entity, wrapper_entity);
 
         if is_numeric && !config.drag_bottom && !config.disabled {
             // When there's a prefix (XYZ label), the drag hitbox covers ONLY the
@@ -431,7 +434,7 @@ fn setup_text_edit_input(
                     HoverCursor(bevy::window::SystemCursorIcon::ColResize),
                 ))
                 .id();
-            commands.entity(wrapper_entity).add_child(hitbox);
+            crate::utils::attach_or_despawn(&mut commands, wrapper_entity, hitbox);
         }
 
         if let Some(ref prefix) = config.prefix {
@@ -483,7 +486,7 @@ fn setup_text_edit_input(
                     prefix_id
                 }
             };
-            commands.entity(wrapper_entity).add_child(prefix_entity);
+            crate::utils::attach_or_despawn(&mut commands, wrapper_entity, prefix_entity);
         }
 
         let placeholder = config
@@ -558,7 +561,7 @@ fn setup_text_edit_input(
 
         let text_input_entity = text_input.id();
 
-        commands.entity(wrapper_entity).add_child(text_input_entity);
+        crate::utils::attach_or_despawn(&mut commands, wrapper_entity, text_input_entity);
 
         if let Some(ref suffix) = config.suffix {
             let suffix_entity = commands
@@ -580,11 +583,18 @@ fn setup_text_edit_input(
                     },
                 ))
                 .id();
-            commands.entity(wrapper_entity).add_child(suffix_entity);
+            crate::utils::attach_or_despawn(&mut commands, wrapper_entity, suffix_entity);
         }
-        commands
-            .entity(wrapper_entity)
-            .insert(TextEditWrapper(text_input_entity));
+        // `attach_or_despawn(entity, wrapper_entity)` above may have
+        // already despawned `wrapper_entity` (if its parent field row
+        // was cascade-despawned by a concurrent inspector rebuild).
+        // Use the liveness-checked insert so we don't spam
+        // `Entity despawned` errors when the wrapper is gone.
+        crate::utils::insert_if_alive(
+            &mut commands,
+            wrapper_entity,
+            TextEditWrapper(text_input_entity),
+        );
     }
 }
 

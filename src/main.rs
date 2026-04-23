@@ -74,23 +74,15 @@ fn main() -> AppExit {
 
 /// Build the editor plugin for the prebuilt `jackdaw` binary.
 ///
-/// The dylib loader is always on in the prebuilt binary so users
-/// who drop extensions into their config directory don't need to
-/// rebuild. The in-tree example extensions (`sample`,
-/// `viewable_camera`) are statically registered only when compiled
-/// with the `dev` feature; release builds via
-/// `--no-default-features` ship without them.
+/// The dylib loader is always on so users who drop extension `.so`/
+/// `.dll`/`.dylib` files into their config directory don't need to
+/// rebuild the editor. The in-tree example extensions in
+/// `examples/*` are workspace members built as standalone cdylibs —
+/// point the loader at their build output if you want to exercise
+/// them, rather than bundling them statically into the editor
+/// binary.
 fn editor_plugin() -> EditorPlugin {
-    let plugin = EditorPlugin::new().with_dylib_loader();
-
-    #[cfg(feature = "dev")]
-    let plugin = plugin
-        .with_extension("sample", || Box::new(sample_extension::SampleExtension))
-        .with_extension("viewable_camera", || {
-            Box::new(viewable_camera_extension::ViewableCameraExtension)
-        });
-
-    plugin
+    EditorPlugin::new().with_dylib_loader()
 }
 
 fn spawn_scene(mut commands: Commands) {

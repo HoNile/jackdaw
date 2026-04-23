@@ -423,11 +423,19 @@ pub(crate) fn remove_component_displays(
         return;
     };
 
-    for child in displays.iter_many(children.collection()) {
-        if let Ok(mut ec) = commands.get_entity(child) {
-            ec.despawn();
+    // Collect then despawn inside a queued world closure so the
+    // cascade runs as one atomic step at flush time. See
+    // `on_inspector_dirty` for the rationale — piecemeal deferred
+    // despawns can interleave with lazy combobox/button setup
+    // spawns and orphan UI text at the root.
+    let old_children: Vec<Entity> = displays.iter_many(children.collection()).collect();
+    commands.queue(move |world: &mut World| {
+        for child in old_children {
+            if let Ok(ec) = world.get_entity_mut(child) {
+                ec.despawn();
+            }
         }
-    }
+    });
 }
 
 /// Handles `Addition<InspectorDirty>` on the Inspector entity: despawn existing
@@ -457,19 +465,29 @@ pub(crate) fn on_inspector_dirty(
     let (inspector_entity, target, children) = inspector.into_inner();
     let source_entity = target.0;
 
-    // Despawn existing display children
-    if let Some(children) = children {
-        for child in displays.iter_many(children.collection()) {
-            if let Ok(mut ec) = commands.get_entity(child) {
+    // Collect the old display children, then queue a world-exclusive
+    // closure that despawns them synchronously and strips
+    // `InspectorDirty` from the source. Doing this in a single
+    // queued closure (rather than piecemeal `commands.despawn`
+    // calls) guarantees the cascade completes as one atomic unit
+    // inside `Commands` flush — no lazy `setup_button` /
+    // `setup_combobox` spawns from a previous rebuild can slip in
+    // between entity despawns and leave orphaned UI children (the
+    // source of the "Inherited" floating label + `ChildOf(...)
+    // relates to an entity that does not exist` warnings).
+    let old_children: Vec<Entity> = children
+        .map(|c| displays.iter_many(c.collection()).collect())
+        .unwrap_or_default();
+    commands.queue(move |world: &mut World| {
+        for child in old_children {
+            if let Ok(ec) = world.get_entity_mut(child) {
                 ec.despawn();
             }
         }
-    }
-
-    // Remove InspectorDirty from the source entity
-    if let Ok(mut ec) = commands.get_entity(source_entity) {
-        ec.remove::<InspectorDirty>();
-    }
+        if let Ok(mut ec) = world.get_entity_mut(source_entity) {
+            ec.remove::<InspectorDirty>();
+        }
+    });
 
     // Rebuild
     let Ok((archetype, entity_ref)) = entity_query.get(source_entity) else {

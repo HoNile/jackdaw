@@ -4494,10 +4494,9 @@ dependencies = [
  "pathdiff",
  "regex",
  "rfd",
- "sample_extension",
  "serde",
  "serde_json",
- "viewable_camera_extension",
+ "test_fixture_extension",
 ]
 
 [[package]]
@@ -7084,6 +7083,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "test_fixture_extension"
+version = "0.0.0"
+dependencies = [
+ "bevy",
+ "bevy_enhanced_input",
+ "jackdaw_api",
 ]
 
 [[package]]

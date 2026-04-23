@@ -27,8 +27,12 @@ pub trait SceneSnapshot: Any + Send + Sync + 'static {
 }
 
 /// Strategy for producing snapshots from the current world.
+///
+/// Takes `&mut World` because concrete snapshotters typically walk
+/// every entity via `world.query_filtered(...)` / `world.entity_mut(...)`,
+/// which Bevy requires exclusive access for (query-state caching).
 pub trait SceneSnapshotter: Send + Sync + 'static {
-    fn capture(&self, world: &World) -> Box<dyn SceneSnapshot>;
+    fn capture(&self, world: &mut World) -> Box<dyn SceneSnapshot>;
 }
 
 /// The active snapshotter. Inserted once at plugin setup. Swapped on

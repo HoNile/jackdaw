@@ -168,7 +168,7 @@ fn setup_panel_section_buttons(
                 ))
                 .observe(on_add_click)
                 .id();
-            commands.entity(container_entity).add_child(add_entity);
+            crate::utils::attach_or_despawn(&mut commands, container_entity, add_entity);
         }
 
         if state.collapsible {
@@ -186,7 +186,7 @@ fn setup_panel_section_buttons(
                 ))
                 .observe(on_collapse_click)
                 .id();
-            commands.entity(container_entity).add_child(collapse_entity);
+            crate::utils::attach_or_despawn(&mut commands, container_entity, collapse_entity);
         }
     }
 }

@@ -71,8 +71,17 @@ pub(crate) fn handle_viewport_click(
     mut commands: Commands,
     mut ray_cast: MeshRayCast,
     (mut group_edit, mut last_click, time): (ResMut<GroupEditState>, ResMut<LastClick>, Res<Time>),
+    // One-frame memory of `draw_state.active`. `draw_brush.confirm` clears
+    // the state inline before this system runs, so the same mouse-press
+    // would otherwise fall through to `selection.clear()` and strip
+    // `Selected` from the just-spawned brush.
+    mut was_drawing: Local<bool>,
 ) {
     let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+
+    let drawing_now = guards.draw_state.active.is_some();
+    let just_finished_draw = *was_drawing && !drawing_now;
+    *was_drawing = drawing_now;
 
     // Don't select during gizmo drag, modal ops, viewport drag, brush edit mode, draw mode,
     // terrain sculpt mode, or shift+click (which starts box select).
@@ -85,7 +94,8 @@ pub(crate) fn handle_viewport_click(
         || guards.modal.active.is_some()
         || guards.viewport_drag.active.is_some()
         || matches!(*guards.edit_mode, crate::brush::EditMode::BrushEdit(_))
-        || guards.draw_state.active.is_some()
+        || drawing_now
+        || just_finished_draw
         || matches!(
             *guards.terrain_edit_mode,
             crate::terrain::TerrainEditMode::Sculpt(_)

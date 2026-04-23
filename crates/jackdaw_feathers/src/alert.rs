@@ -124,7 +124,7 @@ fn setup_alert(
             commands.entity(text_id).add_child(span_id);
         }
 
-        commands.entity(entity).add_child(text_id);
+        crate::utils::attach_or_despawn(&mut commands, entity, text_id);
     }
 }
 

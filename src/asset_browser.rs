@@ -18,9 +18,9 @@ use rfd::AsyncFileDialog;
 
 use crate::{
     EditorEntity,
-    brush::{Brush, BrushEditMode, BrushSelection, EditMode, LastUsedMaterial, SetBrush},
-    commands::CommandHistory,
+    brush::{Brush, BrushEditMode, BrushSelection, EditMode, LastUsedMaterial},
     material_browser::{MaterialRegistry, pbr_filename_regex},
+    prelude::*,
     selection::Selection,
 };
 
@@ -101,18 +101,11 @@ impl Plugin for AssetBrowserPlugin {
                     .run_if(in_state(crate::AppState::Editor)),
             )
             .add_observer(handle_file_double_click)
-            .add_observer(handle_apply_texture)
             .add_observer(handle_select_asset_preview);
     }
 }
 
 // ── Events (absorbed from texture_browser) ──────────────────────────────────
-
-/// Apply a texture to currently selected brush faces (creates a StandardMaterial from path).
-#[derive(Event, Debug, Clone)]
-pub struct ApplyTextureToFaces {
-    pub path: String,
-}
 
 /// Clear texture from currently selected brush faces.
 #[derive(Event, Debug, Clone)]
@@ -487,10 +480,17 @@ fn refresh_browser_on_change(
                             info: tex_info_clone.clone(),
                         });
                     } else {
-                        // 2D texture: apply to faces
-                        commands.trigger(ApplyTextureToFaces {
-                            path: click_path.clone(),
-                        });
+                        // 2D texture: apply to faces via operator.
+                        // User-facing click so history opt-in is
+                        // explicit (the default is `false`).
+                        commands
+                            .operator("material.apply_texture")
+                            .param("path", click_path.clone())
+                            .settings(CallOperatorSettings {
+                                creates_history_entry: true,
+                                ..default()
+                            })
+                            .call();
                     }
                 },
             );
@@ -726,9 +726,15 @@ fn handle_file_double_click(
             .is_some_and(|e| e.eq_ignore_ascii_case("ktx2"))
             && is_ktx2_non_2d(p);
         if !is_non_2d {
-            commands.trigger(ApplyTextureToFaces {
-                path: event.path.clone(),
-            });
+            // User-facing click: explicit history opt-in.
+            commands
+                .operator("material.apply_texture")
+                .param("path", event.path.clone())
+                .settings(CallOperatorSettings {
+                    creates_history_entry: true,
+                    ..default()
+                })
+                .call();
         }
     }
 }
@@ -746,13 +752,31 @@ fn try_find_registry_material(
     registry.get_by_name(&base_name).map(|e| e.handle.clone())
 }
 
-fn handle_apply_texture(
-    event: On<ApplyTextureToFaces>,
+/// Apply a texture material to the current face selection (in
+/// brush-edit face mode) or to every face of every selected brush
+/// (expanding `BrushGroup`s into their child brushes).
+///
+/// Parameter: `path` — the asset path of the texture to apply.
+///
+/// The operator framework captures a scene-AST snapshot before/after
+/// this runs and pushes it onto `CommandHistory`, so there's no
+/// manual `SetBrush` push. The explicit `sync_brush_to_ast` queue at
+/// the end is what makes that work: the outer `save_history` runs
+/// immediately after this system returns and captures the after-
+/// snapshot from the AST, so the mutation has to land in the AST
+/// before that — `BrushPlugin`'s auto-sync fires next `Update`,
+/// which is too late here.
+#[operator(
+    id = "material.apply_texture",
+    label = "Apply Texture",
+    description = "Apply a texture material to the selected faces or brushes"
+)]
+pub fn apply_texture(
+    In(params): In<OperatorParameters>,
     brush_selection: Res<BrushSelection>,
     edit_mode: Res<EditMode>,
     selection: Res<Selection>,
     mut brushes: Query<&mut Brush>,
-    mut history: ResMut<CommandHistory>,
     mut last_material: ResMut<LastUsedMaterial>,
     asset_server: Res<AssetServer>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -760,41 +784,40 @@ fn handle_apply_texture(
     brush_groups: Query<(), With<jackdaw_jsn::types::BrushGroup>>,
     children_query: Query<&Children>,
     mut commands: Commands,
-) {
-    // Check if the texture belongs to a known material definition
-    let material = if let Some(handle) = try_find_registry_material(&event.path, &registry) {
+) -> OperatorResult {
+    let path = match params.0.get("path") {
+        Some(jackdaw_jsn::PropertyValue::String(s)) => s.clone(),
+        _ => {
+            warn!("material.apply_texture called without a String `path` parameter");
+            return OperatorResult::Cancelled;
+        }
+    };
+
+    let material = if let Some(handle) = try_find_registry_material(&path, &registry) {
         handle
     } else {
-        let image: Handle<Image> = asset_server.load(event.path.clone());
+        let image: Handle<Image> = asset_server.load(path.clone());
         materials.add(StandardMaterial {
             base_color_texture: Some(image),
             ..default()
         })
     };
 
+    let mut modified: Vec<Entity> = Vec::new();
+
     if *edit_mode == EditMode::BrushEdit(BrushEditMode::Face) && !brush_selection.faces.is_empty() {
         if let Some(entity) = brush_selection.entity {
             if let Ok(mut brush) = brushes.get_mut(entity) {
-                let old = brush.clone();
                 for &face_idx in &brush_selection.faces {
                     if face_idx < brush.faces.len() {
                         brush.faces[face_idx].material = material.clone();
                     }
                 }
-                let cmd = SetBrush {
-                    entity,
-                    old,
-                    new: brush.clone(),
-                    label: "Apply texture".into(),
-                };
-                history.push_executed(Box::new(cmd));
-                commands
-                    .entity(entity)
-                    .insert(crate::inspector::InspectorDirty);
+                modified.push(entity);
             }
         }
     } else {
-        // Collect targets, expanding BrushGroups into their child brushes
+        // Collect targets, expanding BrushGroups into their child brushes.
         let targets: Vec<Entity> = selection
             .entities
             .iter()
@@ -809,34 +832,40 @@ fn handle_apply_texture(
                 }
             })
             .collect();
-        let mut group_commands: Vec<Box<dyn jackdaw_commands::EditorCommand>> = Vec::new();
+
         for entity in targets {
             if let Ok(mut brush) = brushes.get_mut(entity) {
-                let old = brush.clone();
                 for face in brush.faces.iter_mut() {
                     face.material = material.clone();
                 }
-                let cmd = SetBrush {
-                    entity,
-                    old,
-                    new: brush.clone(),
-                    label: "Apply texture".into(),
-                };
-                group_commands.push(Box::new(cmd));
-                commands
-                    .entity(entity)
-                    .insert(crate::inspector::InspectorDirty);
+                modified.push(entity);
             }
-        }
-        if !group_commands.is_empty() {
-            history.push_executed(Box::new(jackdaw_commands::CommandGroup {
-                commands: group_commands,
-                label: "Apply texture".into(),
-            }));
         }
     }
 
+    if modified.is_empty() {
+        return OperatorResult::Cancelled;
+    }
+
     last_material.material = Some(material);
+
+    let to_sync = modified.clone();
+    commands.queue(move |world: &mut World| {
+        for entity in to_sync {
+            if let Some(brush) = world.get::<Brush>(entity) {
+                let brush = brush.clone();
+                crate::brush::sync_brush_to_ast(world, entity, &brush);
+            }
+        }
+    });
+
+    for entity in modified {
+        commands
+            .entity(entity)
+            .insert(crate::inspector::InspectorDirty);
+    }
+
+    OperatorResult::Finished
 }
 
 fn handle_select_asset_preview(
@@ -1178,9 +1207,15 @@ fn update_preview_panel(
         commands
             .entity(apply_btn)
             .observe(move |_: On<Pointer<Click>>, mut commands: Commands| {
-                commands.trigger(ApplyTextureToFaces {
-                    path: path_str.clone(),
-                });
+                // User-facing click: explicit history opt-in.
+                commands
+                    .operator("material.apply_texture")
+                    .param("path", path_str.clone())
+                    .settings(CallOperatorSettings {
+                        creates_history_entry: true,
+                        ..default()
+                    })
+                    .call();
             });
         commands.entity(apply_btn).observe(
             |hover: On<Pointer<Over>>, mut bg: Query<&mut BackgroundColor>| {

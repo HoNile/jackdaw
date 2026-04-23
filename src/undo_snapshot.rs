@@ -15,9 +15,18 @@ pub(super) fn plugin(app: &mut App) {
 pub struct JsnAstSnapshotter;
 
 impl SceneSnapshotter for JsnAstSnapshotter {
-    fn capture(&self, world: &World) -> Box<dyn SceneSnapshot> {
+    fn capture(&self, world: &mut World) -> Box<dyn SceneSnapshot> {
+        // Re-run the full scene serialization (same pass as
+        // `save_scene_inner`) rather than cloning the live AST.
+        // `sync_component_to_ast` / `register_entity_in_ast` use the
+        // stateless `AstSerializerProcessor` which emits runtime
+        // asset handles (ad-hoc materials from `materials.add(...)`)
+        // as `null`; cloning that would lose them on every undo.
+        // `build_snapshot_ast` uses the inline-asset-aware pipeline,
+        // so runtime handles are captured under `#Name` references
+        // alongside their serialized data.
         Box::new(JsnAstSnapshot {
-            ast: world.resource::<SceneJsnAst>().clone(),
+            ast: crate::scene_io::build_snapshot_ast(world),
         })
     }
 }

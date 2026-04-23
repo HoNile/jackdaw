@@ -67,39 +67,40 @@ pub fn decorate_animatable_fields(
         if !is_animatable(&row.type_path, &row.field_path) {
             continue;
         }
-        // Two-entity structure: an absolutely-positioned wrapper node
-        // that takes care of where the diamond sits in the row, and a
-        // child button that carries the `AnimDiamondButton` marker
-        // plus the feathers `button()` bundle (which brings its own
-        // Node). Splitting it this way avoids the duplicate-Node
-        // panic that happens when you stack a custom Node alongside
-        // a bundle that already includes one.
+        // Two-entity split: absolutely-positioned wrapper +
+        // button-bundle child (the bundle ships its own Node, so
+        // stacking a custom Node alongside would double-insert).
+        //
+        // Attached via `attach_or_despawn` so concurrent inspector
+        // rebuilds that cascade-despawn `row_entity` this frame
+        // don't leave orphaned `ChildOf` relationships.
         let wrapper = commands
+            .spawn((Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(0.0),
+                right: Val::Px(4.0),
+                ..default()
+            },))
+            .id();
+
+        let button_entity = commands
             .spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: Val::Px(0.0),
-                    right: Val::Px(4.0),
-                    ..default()
+                AnimDiamondButton {
+                    source_entity: row.source_entity,
+                    component_type_path: row.type_path.clone(),
+                    field_path: row.field_path.clone(),
                 },
-                ChildOf(row_entity),
+                button(
+                    ButtonProps::new("")
+                        .with_variant(ButtonVariant::Ghost)
+                        .with_size(ButtonSize::IconSM)
+                        .with_left_icon(Icon::Diamond),
+                ),
             ))
             .id();
 
-        commands.spawn((
-            AnimDiamondButton {
-                source_entity: row.source_entity,
-                component_type_path: row.type_path.clone(),
-                field_path: row.field_path.clone(),
-            },
-            button(
-                ButtonProps::new("")
-                    .with_variant(ButtonVariant::Ghost)
-                    .with_size(ButtonSize::IconSM)
-                    .with_left_icon(Icon::Diamond),
-            ),
-            ChildOf(wrapper),
-        ));
+        jackdaw_feathers::utils::attach_or_despawn(&mut commands, wrapper, button_entity);
+        jackdaw_feathers::utils::attach_or_despawn(&mut commands, row_entity, wrapper);
     }
 }
 

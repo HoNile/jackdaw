@@ -533,6 +533,18 @@ fn handle_undo_redo_keys(world: &mut World) {
         return;
     }
 
+    // If a modal operator is in flight when the user hits undo/redo,
+    // cancel it first. The snapshot restore is about to rip the
+    // scene out from under the modal, so its `ActiveModalOperator`
+    // marker + per-operator state (e.g. `DrawBrushState.active`)
+    // would otherwise be left stale — the next keypress that tries
+    // to start the same modal would no-op because the framework
+    // thinks one is already running.
+    use jackdaw_api_internal::operator::OperatorWorldExt as _;
+    if let Err(err) = world.cancel_active_modal() {
+        warn!("Failed to cancel active modal before undo/redo: {err:?}");
+    }
+
     let mut history = world.resource_mut::<CommandHistory>();
     let command = if redo {
         history.redo_stack.pop()

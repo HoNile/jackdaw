@@ -198,8 +198,9 @@ impl<'w, 's> OperatorCommandsExt<'w, 's> for Commands<'w, 's> {
 #[derive(Clone, Debug, Copy)]
 pub struct CallOperatorSettings {
     /// Whether a successful call should push an undo entry. Default
-    /// `true`. Set `false` for view-local effects (camera moves,
-    /// preview toggles) that should not be undoable.
+    /// `false` so that nested operator calls inside a custom op don't
+    /// spam the undo stack. User-facing dispatchers (keybinds, menu,
+    /// toolbar) set this to `true` explicitly.
     pub creates_history_entry: bool,
     pub execution_context: ExecutionContext,
 }
@@ -420,9 +421,15 @@ fn dispatch_operator(
     // Only the outermost operator in a nesting chain captures the
     // snapshot. Inner `operator` calls mutate inside the outer's
     // span and their changes roll into the outer's diff.
-    let before_snapshot = settings
-        .creates_history_entry
-        .then(|| world.resource::<ActiveSnapshotter>().0.capture(world));
+    //
+    // `resource_scope` lifts `ActiveSnapshotter` out of the world
+    // temporarily so `capture` can take `&mut World` (needed for
+    // snapshotters that walk entities via `World::query`).
+    let before_snapshot = settings.creates_history_entry.then(|| {
+        world.resource_scope(|world, snapshotter: Mut<ActiveSnapshotter>| {
+            snapshotter.0.capture(world)
+        })
+    });
 
     let system = match settings.execution_context {
         ExecutionContext::Execute => op.execute,
@@ -468,7 +475,8 @@ fn save_history(
     world: &mut World,
 ) {
     let Some(before) = before else { return };
-    let after = world.resource::<ActiveSnapshotter>().0.capture(world);
+    let after = world
+        .resource_scope(|world, snapshotter: Mut<ActiveSnapshotter>| snapshotter.0.capture(world));
     if before.equals(&*after) {
         return;
     }

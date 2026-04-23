@@ -49,7 +49,12 @@ const SKIP_COMPONENT_PATHS: &[&str] = &[
 
 /// Paths that override the skip prefixes  -- these are always saved even if
 /// they match a skip prefix.
-const ALWAYS_SAVE_PATHS: &[&str] = &["bevy_camera::visibility::Visibility"];
+const ALWAYS_SAVE_PATHS: &[&str] = &[
+    "bevy_camera::visibility::Visibility",
+    // Overrides the `jackdaw::` skip so `apply_ast_to_world` can
+    // match selected brushes by stable id across an undo.
+    "jackdaw::draw_brush::BrushStableId",
+];
 
 pub fn should_skip_component(type_path: &str) -> bool {
     // Always-save takes priority over any skip rule
@@ -1585,9 +1590,18 @@ fn cleanup_pending_new_scene(
 
 /// Collect scene entities (named non-editor entities and all their descendants).
 /// Requires `&mut World` for `query_filtered`.
+///
+/// BEI action entities carry a `Name` (via `Action<A>`'s
+/// `#[require(Name::new(any::type_name::<A>()), ActionSettings, …)]`)
+/// but are editor infrastructure — filter them out via
+/// `Without<ActionSettings>` so they don't get serialized into
+/// undo snapshots and re-spawned as scene entities on undo.
 fn collect_scene_entities_from_set(world: &mut World, editor_set: &HashSet<Entity>) -> Vec<Entity> {
     let roots: Vec<Entity> = world
-        .query_filtered::<Entity, With<Name>>()
+        .query_filtered::<Entity, (
+            With<Name>,
+            Without<bevy_enhanced_input::prelude::ActionSettings>,
+        )>()
         .iter(world)
         .filter(|e| !editor_set.contains(e))
         .collect();
@@ -1658,11 +1672,23 @@ pub(crate) fn clear_scene_entities(world: &mut World) {
 /// Despawn every non-editor scene entity, leaving editor infrastructure
 /// (cameras, grids, gizmos) and the undo/redo stacks intact. Used by
 /// snapshot apply during undo/redo.
+///
+/// `bevy_enhanced_input`'s `Action<A>` component auto-inserts a
+/// `Name` component (see its `#[require(Name::new(any::type_name::<A>()), …)]`),
+/// so BEI action entities are otherwise indistinguishable from
+/// scene roots. They also carry the non-generic `ActionSettings`
+/// marker, so excluding those keeps every operator's input routing
+/// alive across an `apply_ast_to_world` pass — without action
+/// entities in `Actions<CoreExtensionInputContext>`, BEI emits no
+/// `Fire` events and every editor keybind goes silent.
 pub(crate) fn despawn_scene_entities(world: &mut World) {
     let editor_set = collect_editor_entities(world);
 
     let roots: Vec<Entity> = world
-        .query_filtered::<Entity, With<Name>>()
+        .query_filtered::<Entity, (
+            With<Name>,
+            Without<bevy_enhanced_input::prelude::ActionSettings>,
+        )>()
         .iter(world)
         .filter(|e| !editor_set.contains(e))
         .collect();
@@ -1685,6 +1711,72 @@ pub(crate) fn despawn_scene_entities(world: &mut World) {
     }
 }
 
+/// Build a self-contained `SceneJsnAst` snapshot of the current
+/// scene by running the same full-scene serialization pass as
+/// `save_scene_inner`. This picks up **runtime asset handles** (ad-
+/// hoc materials etc.) as inline assets under `#Name` keys — the
+/// live `SceneJsnAst` resource can't do that because
+/// `sync_component_to_ast` uses the stateless `AstSerializerProcessor`
+/// which serializes runtime handles as `null`.
+///
+/// Used by `JsnAstSnapshotter::capture` so undo/redo round-trips
+/// include inline asset data. On the apply side, `apply_ast_to_world`
+/// already reads `scene.assets` via `load_inline_assets` and passes
+/// the resulting `local_assets` into `load_scene_from_jsn`, which
+/// wires runtime handles back up by `#Name`.
+///
+/// Cost: O(scene entities × registered components) per snapshot.
+/// Called once per history-creating operator dispatch, not per
+/// frame — acceptable for the current editor workload.
+pub fn build_snapshot_ast(world: &mut World) -> jackdaw_jsn::SceneJsnAst {
+    let parent_path: Cow<'_, Path> = match world
+        .get_resource::<crate::project::ProjectRoot>()
+        .map(|r| r.root.clone())
+    {
+        Some(p) => Cow::Owned(p),
+        None => Cow::Owned(env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
+    };
+
+    let editor_set = collect_editor_entities(world);
+    let scene_entities = collect_scene_entities_from_set(world, &editor_set);
+
+    let registry = world.resource::<AppTypeRegistry>().clone();
+    let registry_guard = registry.read();
+
+    let catalog_id_to_name = world
+        .get_resource::<crate::asset_catalog::AssetCatalog>()
+        .map(|c| c.id_to_name.clone())
+        .unwrap_or_default();
+
+    let (inline_assets, inline_asset_data) = collect_inline_assets(
+        world,
+        &registry_guard,
+        &parent_path,
+        &scene_entities,
+        &catalog_id_to_name,
+    );
+
+    let entities = build_scene_snapshot(
+        world,
+        &registry_guard,
+        &parent_path,
+        &inline_assets,
+        &scene_entities,
+    );
+
+    drop(registry_guard);
+
+    let jsn = JsnScene {
+        jsn: JsnHeader::default(),
+        metadata: JsnMetadata::default(),
+        assets: JsnAssets(inline_asset_data),
+        editor: None,
+        scene: entities,
+    };
+
+    jackdaw_jsn::SceneJsnAst::from_jsn_scene(&jsn, &scene_entities)
+}
+
 /// Replace the current world's scene with the one encoded in `ast`.
 ///
 /// Despawns existing scene entities (without touching undo/redo
@@ -1693,9 +1785,21 @@ pub(crate) fn despawn_scene_entities(world: &mut World) {
 /// its own parallel spawn logic to maintain.
 pub fn apply_ast_to_world(world: &mut World, ast: &jackdaw_jsn::SceneJsnAst) {
     use jackdaw_jsn::format::JsnMetadata;
+    use std::collections::HashMap;
 
-    // Clear selection + tree rows before touching entities so observers
-    // don't fire on stale references.
+    // Snapshot the stable ids of selected entities; the reload
+    // respawns everything, so we restore selection by stable id
+    // afterwards (see the restore block below).
+    let selected_stable_ids: Vec<crate::draw_brush::BrushStableId> = world
+        .resource::<crate::selection::Selection>()
+        .entities
+        .iter()
+        .filter_map(|&e| world.get::<crate::draw_brush::BrushStableId>(e).copied())
+        .collect();
+
+    // Clear selection + tree rows so observers don't fire on stale
+    // references. `handle_undo_redo_keys` already cancels any active
+    // modal before we get here.
     world
         .resource_mut::<crate::selection::Selection>()
         .entities
@@ -1714,6 +1818,29 @@ pub fn apply_ast_to_world(world: &mut World, ast: &jackdaw_jsn::SceneJsnAst) {
 
     *world.resource_mut::<jackdaw_jsn::SceneJsnAst>() =
         jackdaw_jsn::SceneJsnAst::from_jsn_scene(&scene, &spawned);
+
+    // Restore selection by stable id. Update `Selection.entities`
+    // BEFORE inserting `Selected` so `add_component_displays` (an
+    // `On<Add, Selected>` observer that reads `selection.primary()`)
+    // sees the new selection and rebuilds the inspector.
+    if !selected_stable_ids.is_empty() {
+        let mut stable_to_entity: HashMap<crate::draw_brush::BrushStableId, Entity> =
+            HashMap::new();
+        let mut q = world.query::<(Entity, &crate::draw_brush::BrushStableId)>();
+        for (entity, sid) in q.iter(world) {
+            stable_to_entity.insert(*sid, entity);
+        }
+        let restored: Vec<Entity> = selected_stable_ids
+            .iter()
+            .filter_map(|sid| stable_to_entity.get(sid).copied())
+            .collect();
+        world.resource_mut::<crate::selection::Selection>().entities = restored.clone();
+        for &entity in &restored {
+            if let Ok(mut ec) = world.get_entity_mut(entity) {
+                ec.insert(crate::selection::Selected);
+            }
+        }
+    }
 }
 
 /// ISO 8601 timestamp (simplified  -- no chrono dependency).

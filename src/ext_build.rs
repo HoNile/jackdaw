@@ -28,6 +28,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crate::new_project::TemplateLinkage;
 use crate::sdk_paths::SdkPaths;
 
 /// Everything that can go wrong while building an extension/game
@@ -167,8 +168,11 @@ fn discover_sdk() -> Result<SdkPaths, BuildError> {
 ///
 /// Convenience wrapper around
 /// [`build_extension_project_with_progress`] that ignores progress.
-pub fn build_extension_project(project_dir: &Path) -> Result<PathBuf, BuildError> {
-    build_extension_project_with_progress(project_dir, None)
+pub fn build_extension_project(
+    project_dir: &Path,
+    linkage: TemplateLinkage,
+) -> Result<PathBuf, BuildError> {
+    build_extension_project_with_progress(project_dir, None, linkage)
 }
 
 /// Build the project and (optionally) stream progress into `sink`.
@@ -182,6 +186,7 @@ pub fn build_extension_project(project_dir: &Path) -> Result<PathBuf, BuildError
 pub fn build_extension_project_with_progress(
     project_dir: &Path,
     sink: Option<Arc<Mutex<BuildProgress>>>,
+    linkage: TemplateLinkage,
 ) -> Result<PathBuf, BuildError> {
     let project_dir = project_dir
         .canonicalize()
@@ -195,7 +200,14 @@ pub fn build_extension_project_with_progress(
         return Err(BuildError::MissingCargoToml(project_dir));
     }
 
-    let sdk = discover_sdk()?;
+    // The wrapper only applies to dylib builds. A static project
+    // depends on `jackdaw` directly; rewriting `--extern bevy` to the
+    // SDK dylib gives it a bevy whose hash doesn't match what cargo
+    // compiled, and the build fails with `can't find crate for jackdaw`.
+    let sdk = match linkage {
+        TemplateLinkage::Dylib => Some(discover_sdk()?),
+        TemplateLinkage::Static => None,
+    };
 
     // Best-effort: probe the expected artifact count via cargo
     // metadata before kicking off the real build. Runs in the
@@ -219,9 +231,11 @@ pub fn build_extension_project_with_progress(
             .expect("Cargo.toml path must be valid UTF-8"),
         "--message-format=json-render-diagnostics",
     ]);
-    cmd.env("RUSTC_WRAPPER", &sdk.wrapper);
-    cmd.env("JACKDAW_SDK_DYLIB", &sdk.dylib);
-    cmd.env("JACKDAW_SDK_DEPS", &sdk.deps);
+    if let Some(sdk) = sdk.as_ref() {
+        cmd.env("RUSTC_WRAPPER", &sdk.wrapper);
+        cmd.env("JACKDAW_SDK_DYLIB", &sdk.dylib);
+        cmd.env("JACKDAW_SDK_DEPS", &sdk.deps);
+    }
 
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -281,12 +295,19 @@ pub fn build_extension_project_with_progress(
         });
     }
 
-    let artifact_name = artifact_file_name(&project_dir);
-    let artifact = project_dir.join("target/debug").join(&artifact_name);
-    if !artifact.is_file() {
-        return Err(BuildError::OutputNotProduced { expected: artifact });
+    match linkage {
+        TemplateLinkage::Dylib => {
+            let artifact_name = artifact_file_name(&project_dir);
+            let artifact = project_dir.join("target/debug").join(&artifact_name);
+            if !artifact.is_file() {
+                return Err(BuildError::OutputNotProduced { expected: artifact });
+            }
+            Ok(artifact)
+        }
+        // Static builds have no cdylib to install; return the project
+        // dir so the caller can `enter_project(..)` on it.
+        TemplateLinkage::Static => Ok(project_dir),
     }
-    Ok(artifact)
 }
 
 /// Parse a single line from `cargo --message-format=json-…`. On a
@@ -412,6 +433,34 @@ fn package_name_from_manifest(project_dir: &Path) -> String {
             })
         })
         .unwrap_or_else(|| "unnamed".to_string())
+}
+
+/// Quick scan of a project's `Cargo.toml` to decide whether
+/// `cargo build` would actually produce a cdylib. Used at project-
+/// open time: if the manifest is a plain binary crate (e.g., the
+/// editor's own source tree, or a user opening any non-extension
+/// cargo project) we skip the build pipeline entirely and let them
+/// in — otherwise `cargo build` compiles the whole dep tree only to
+/// fail the artifact check at the end.
+///
+/// Same line-based parsing style as [`package_name_from_manifest`]
+/// to avoid pulling in a toml dep. Handles the two shapes scaffolded
+/// projects use: `crate-type = ["cdylib"]` and
+/// `crate-type = ["rlib", "cdylib"]`.
+pub(crate) fn manifest_declares_cdylib(project_dir: &Path) -> bool {
+    let Ok(contents) = std::fs::read_to_string(project_dir.join("Cargo.toml")) else {
+        return false;
+    };
+    contents.lines().any(|line| {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix("crate-type") else {
+            return false;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('=') else {
+            return false;
+        };
+        rest.contains("\"cdylib\"") || rest.contains("'cdylib'")
+    })
 }
 
 /// Derive the expected cdylib filename from the project's package

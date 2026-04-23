@@ -302,24 +302,36 @@ fn setup_combobox_fields(
         }
         config.initialized = true;
 
-        let label_entity = commands
-            .spawn((
-                Text::new(&config.label),
-                TextFont {
-                    font: font.clone(),
-                    font_size: 11.0,
-                    weight: FontWeight::MEDIUM,
-                    ..default()
-                },
-                TextColor(TEXT_MUTED_COLOR.into()),
-            ))
-            .id();
-
-        let combobox_entity = commands.spawn(combobox(config.options.clone())).id();
-
-        commands
-            .entity(entity)
-            .add_children(&[label_entity, combobox_entity]);
+        // Spawn the label + combobox inside a world-exclusive closure
+        // that first checks the row entity is still alive. The
+        // previous `commands.spawn(...).id()` + `commands.entity(entity)
+        // .add_children(&[…])` flow only checked liveness at queue
+        // time; if `entity` was cascade-despawned before the queued
+        // spawns flushed, the children ended up orphaned with
+        // `ChildOf(dead entity)` references, producing the
+        // `ChildOf(…) relates to an entity that does not exist` warns
+        // on every inspector rebuild.
+        let label = config.label.clone();
+        let options = config.options.clone();
+        let font = font.clone();
+        commands.queue(move |world: &mut World| {
+            let Ok(mut ec) = world.get_entity_mut(entity) else {
+                return;
+            };
+            ec.with_children(|parent| {
+                parent.spawn((
+                    Text::new(label),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 11.0,
+                        weight: FontWeight::MEDIUM,
+                        ..default()
+                    },
+                    TextColor(TEXT_MUTED_COLOR.into()),
+                ));
+                parent.spawn(combobox(options));
+            });
+        });
     }
 }
 

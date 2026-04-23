@@ -335,63 +335,89 @@ fn setup_button(
         node.padding = UiRect::axes(left_padding, node.padding.top);
         node.padding.right = right_padding;
 
-        commands.entity(entity).with_children(|parent| {
-            if let Some(icon) = config.left_icon {
-                parent.spawn((
-                    Text::new(icon.unicode()),
-                    TextFont {
-                        font: icon_font.0.clone(),
-                        font_size: size.icon_size(),
-                        ..default()
-                    },
-                    TextColor(variant.text_color().into()),
-                ));
-            }
+        // Spawn the button's text/icon children through a queued
+        // world-exclusive closure that first checks the button is
+        // still alive. The lazy `with_children` spawn here used to
+        // race against parent cascade-despawns: a deferred
+        // `commands.entity(entity).with_children(...)` path would
+        // queue child spawns with `ChildOf(entity)`, and if a
+        // despawn of the button landed before these flushed, the
+        // `ChildOf` insert hook would fire `add_related<ChildOf>`
+        // on a dead parent, producing the
+        // `Entity despawned … is invalid` errors on every inspector
+        // rebuild. The `get_entity_mut` guard + synchronous
+        // `with_children` here closes that window — everything
+        // happens atomically on one `&mut World` block.
+        let left_icon = config.left_icon;
+        let right_icon = config.right_icon;
+        let content = config.content.clone();
+        let subtitle = config.subtitle.clone();
+        let variant = *variant;
+        let size = *size;
+        let font = font.clone();
+        let icon_font_handle = icon_font.0.clone();
+        commands.queue(move |world: &mut World| {
+            let Ok(mut ec) = world.get_entity_mut(entity) else {
+                return;
+            };
+            ec.with_children(|parent| {
+                if let Some(icon) = left_icon {
+                    parent.spawn((
+                        Text::new(icon.unicode()),
+                        TextFont {
+                            font: icon_font_handle.clone(),
+                            font_size: size.icon_size(),
+                            ..default()
+                        },
+                        TextColor(variant.text_color().into()),
+                    ));
+                }
 
-            if !config.content.is_empty() {
-                parent.spawn((
-                    Text::new(&config.content),
-                    TextFont {
-                        font: font.clone(),
-                        font_size: TEXT_SIZE,
-                        weight: FontWeight::MEDIUM,
-                        ..default()
-                    },
-                    TextColor(variant.text_color().into()),
-                    Node {
-                        flex_grow: 1.0,
-                        ..default()
-                    },
-                ));
-            }
+                if !content.is_empty() {
+                    parent.spawn((
+                        Text::new(&content),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: TEXT_SIZE,
+                            weight: FontWeight::MEDIUM,
+                            ..default()
+                        },
+                        TextColor(variant.text_color().into()),
+                        Node {
+                            flex_grow: 1.0,
+                            ..default()
+                        },
+                    ));
+                }
 
-            if let Some(ref subtitle) = config.subtitle {
-                parent.spawn((
-                    Text::new(subtitle),
-                    TextFont {
-                        font: font.clone(),
-                        font_size: TEXT_SIZE_SM,
-                        ..default()
-                    },
-                    TextColor(TEXT_MUTED_COLOR.into()),
-                    Node {
-                        margin: UiRect::top(px(-6.0)),
-                        ..default()
-                    },
-                ));
-            }
+                if let Some(ref subtitle) = subtitle {
+                    parent.spawn((
+                        Text::new(subtitle),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: TEXT_SIZE_SM,
+                            ..default()
+                        },
+                        TextColor(TEXT_MUTED_COLOR.into()),
+                        Node {
+                            margin: UiRect::top(px(-6.0)),
+                            ..default()
+                        },
+                    ));
+                }
 
-            if let Some(icon) = config.right_icon {
-                parent.spawn((
-                    Text::new(icon.unicode()),
-                    TextFont {
-                        font: icon_font.0.clone(),
-                        font_size: size.icon_size(),
-                        ..default()
-                    },
-                    TextColor(variant.text_color().into()),
-                ));
-            }
+                if let Some(icon) = right_icon {
+                    parent.spawn((
+                        Text::new(icon.unicode()),
+                        TextFont {
+                            font: icon_font_handle.clone(),
+                            font_size: size.icon_size(),
+                            ..default()
+                        },
+                        TextColor(variant.text_color().into()),
+                    ));
+                }
+            });
         });
     }
 }

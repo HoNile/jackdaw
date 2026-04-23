@@ -181,7 +181,7 @@ fn setup_variant_edit(
                 TextColor(TEXT_MUTED_COLOR.into()),
             ))
             .id();
-        commands.entity(entity).add_child(label_entity);
+        crate::utils::attach_or_despawn(&mut commands, entity, label_entity);
 
         let selected_variant = config.variants.get(config.selected_index);
         let value = selected_variant
@@ -196,7 +196,7 @@ fn setup_variant_edit(
             .spawn((VariantEditButton, button(button_props)))
             .id();
 
-        commands.entity(entity).add_child(button_entity);
+        crate::utils::attach_or_despawn(&mut commands, entity, button_entity);
     }
 }
 
