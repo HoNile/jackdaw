@@ -1838,6 +1838,16 @@ pub fn apply_ast_to_world(world: &mut World, ast: &jackdaw_jsn::SceneJsnAst) {
     // original order so `Selection.primary()` lands on the same brush
     // it pointed at before the reload (important because
     // `add_component_displays` inspects the primary).
+    //
+    // Ordering matters: update `Selection.entities` FIRST, then insert
+    // `Selected` on each entity. `insert(Selected)` fires the
+    // `On<Add, Selected>` observer synchronously (`add_component_displays`),
+    // which reads `Selection::primary()` to decide which entity to build
+    // displays for. If we inserted `Selected` first and updated the
+    // resource after, the observer would see an empty `Selection` and
+    // early-return, leaving the inspector stale even though the entity
+    // is now selected — exactly the "need to deselect/reselect to see
+    // the restored material" symptom.
     if !selected_stable_ids.is_empty() {
         let mut stable_to_entity: HashMap<crate::draw_brush::BrushStableId, Entity> =
             HashMap::new();
@@ -1849,14 +1859,14 @@ pub fn apply_ast_to_world(world: &mut World, ast: &jackdaw_jsn::SceneJsnAst) {
             .iter()
             .filter_map(|sid| stable_to_entity.get(sid).copied())
             .collect();
+        world
+            .resource_mut::<crate::selection::Selection>()
+            .entities = restored.clone();
         for &entity in &restored {
             if let Ok(mut ec) = world.get_entity_mut(entity) {
                 ec.insert(crate::selection::Selected);
             }
         }
-        world
-            .resource_mut::<crate::selection::Selection>()
-            .entities = restored;
     }
 }
 
