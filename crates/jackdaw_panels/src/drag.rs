@@ -721,25 +721,15 @@ fn cursor_edge(rect: Rect, cursor: Vec2) -> Option<DropEdge> {
 }
 
 fn edge_overlay_rect(rect: Rect, edge: DropEdge) -> Rect {
-    let (center, size) = match edge {
-        DropEdge::Top => (
-            rect.center() - Vec2::Y * rect.size().y * 0.25,
-            rect.size() * Vec2::new(1.0, 0.5),
-        ),
-        DropEdge::Bottom => (
-            rect.center() + Vec2::Y * rect.size().y * 0.25,
-            rect.size() * Vec2::new(1.0, 0.5),
-        ),
-        DropEdge::Left => (
-            rect.center() - Vec2::X * rect.size().x * 0.25,
-            rect.size() * Vec2::new(0.5, 1.0),
-        ),
-        DropEdge::Right => (
-            rect.center() + Vec2::X * rect.size().x * 0.25,
-            rect.size() * Vec2::new(0.5, 1.0),
-        ),
+    let (axis, factor) = match edge {
+        DropEdge::Top => (-Vec2::Y * rect.size().y, Vec2::new(1.0, 0.5)),
+        DropEdge::Bottom => (Vec2::Y * rect.size().y, Vec2::new(1.0, 0.5)),
+        DropEdge::Left => (-Vec2::X * rect.size().x, Vec2::new(0.5, 1.0)),
+        DropEdge::Right => (Vec2::X * rect.size().x, Vec2::new(0.5, 1.0)),
     };
-    Rect::from_center_size(center, size)
+    // use half length and move the center by 25% of the axis length make the overlay
+    // cover exactly half of the area along a given axis
+    Rect::from_center_size(rect.center() + axis * 0.25, rect.size() * factor)
 }
 
 fn is_far_side(mouse_pos: Vec2, child_pos: Vec2, parent: &Node) -> (bool, bool) {
