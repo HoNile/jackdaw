@@ -6,11 +6,11 @@
 //! Run with: `cargo run --example custom_components`
 
 use bevy::prelude::*;
-use jackdaw::{EditorMeta, EditorPlugin, ReflectEditorMeta};
+use jackdaw::{EditorMeta, ReflectEditorMeta, prelude::*};
 
 fn main() -> AppExit {
     App::new()
-        .add_plugins((DefaultPlugins, EditorPlugin::new().build()))
+        .add_plugins((DefaultPlugins, EditorPlugins::default()))
         .register_type::<Health>()
         .register_type::<Speed>()
         .register_type::<Team>()

@@ -8,7 +8,7 @@
 //! saved from the editor. You only need to provide a camera.
 
 use bevy::prelude::*;
-use jackdaw_runtime::{JackdawPlugin, JackdawSceneRoot};
+use jackdaw_runtime::prelude::*;
 
 fn main() -> AppExit {
     App::new()

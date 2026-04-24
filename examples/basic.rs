@@ -1,9 +1,9 @@
 use bevy::prelude::*;
-use jackdaw::EditorPlugin;
+use jackdaw::prelude::*;
 
 fn main() -> AppExit {
     App::new()
-        .add_plugins((DefaultPlugins, EditorPlugin::new().build()))
+        .add_plugins((DefaultPlugins, EditorPlugins::default()))
         .add_systems(Startup, spawn_scene)
         .run()
 }

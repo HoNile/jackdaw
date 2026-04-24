@@ -21,7 +21,11 @@ pub fn headless_app() -> App {
             })
             .disable::<WinitPlugin>(),
     )
-    .add_plugins(EditorPlugin::new().build());
+    .add_plugins(EditorPlugins::default().set(DylibLoaderPlugin {
+        extra_paths: Vec::new(),
+        include_user_dir: false,
+        include_env_dir: false,
+    }));
     app
 }
 

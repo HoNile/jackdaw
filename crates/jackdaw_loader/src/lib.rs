@@ -126,7 +126,20 @@ impl LoadedDylibs {
     }
 }
 
-/// Installs the dylib extension loader.
+/// Enable discovery and loading of dynamic-library extensions.
+///
+/// With the defaults, the loader scans the per-user config
+/// directory (`~/.config/jackdaw/extensions/` and platform
+/// equivalents) plus `$JACKDAW_EXTENSIONS_DIR` if set. Call
+/// [`Self::with_extension_search_path`] to add more locations
+/// or [`Self::with_user_extension_dir`] /
+/// [`Self::with_extension_env_var`] to opt out of the defaults.
+///
+/// Dynamic-library extensions require the host binary to be
+/// built with `bevy/dynamic_linking` so the editor and every
+/// loaded extension share one copy of Bevy at runtime. Without
+/// that, trait-object calls across the dylib boundary are
+/// unsound.
 ///
 /// Configuration lives on the plugin itself because loading happens
 /// during `build()`, so the loader can reach `&mut App` to register
@@ -148,6 +161,32 @@ impl Default for DylibLoaderPlugin {
             include_user_dir: true,
             include_env_dir: true,
         }
+    }
+}
+
+impl DylibLoaderPlugin {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add an explicit search path for the dylib loader. Implicitly
+    /// enables the loader if it wasn't already.
+    pub fn with_extension_search_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.extra_paths.push(path.into());
+        self
+    }
+
+    /// Opt in or out of honouring `$JACKDAW_EXTENSIONS_DIR`.
+    /// Defaults to `true` when the loader is enabled.
+    pub fn with_extension_env_var(mut self, enable: bool) -> Self {
+        self.include_env_dir = enable;
+        self
+    }
+    /// Opt in or out of searching the per-user config directory.
+    /// Defaults to `true` when the loader is enabled.
+    pub fn with_user_extension_dir(mut self, enable: bool) -> Self {
+        self.include_user_dir = enable;
+        self
     }
 }
 

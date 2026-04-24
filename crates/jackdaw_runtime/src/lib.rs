@@ -17,6 +17,10 @@ use serde::de::{DeserializeSeed, Visitor};
 
 pub use jackdaw_jsn::{Brush, BrushFaceData, CustomProperties, GltfSource, PropertyValue};
 
+pub mod prelude {
+    pub use crate::{JackdawPlugin, JackdawSceneRoot};
+}
+
 pub struct JackdawPlugin;
 
 impl Plugin for JackdawPlugin {

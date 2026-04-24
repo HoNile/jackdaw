@@ -4,7 +4,7 @@ use bevy::{
     image::{ImageAddressMode, ImagePlugin, ImageSamplerDescriptor},
     prelude::*,
 };
-use jackdaw::EditorPlugin;
+use jackdaw::prelude::*;
 
 fn main() -> AppExit {
     // Install a SIGINT/SIGTERM handler before anything else gets a
@@ -63,7 +63,7 @@ fn main() -> AppExit {
                     },
                 }),
         )
-        .add_plugins(editor_plugin().build())
+        .add_plugins(editor_plugins)
         .add_systems(OnEnter(jackdaw::AppState::Editor), spawn_scene);
 
     if let Some(pending) = auto_open {
@@ -82,8 +82,8 @@ fn main() -> AppExit {
 /// point the loader at their build output if you want to exercise
 /// them, rather than bundling them statically into the editor
 /// binary.
-fn editor_plugin() -> EditorPlugin {
-    EditorPlugin::new().with_dylib_loader()
+fn editor_plugins(app: &mut App) {
+    app.add_plugins(EditorPlugins::default());
 }
 
 fn spawn_scene(mut commands: Commands) {

@@ -9,6 +9,10 @@ use bevy::{
 use methods::jackdaw_app_info_handler;
 use scene_snapshot::scene_snapshot_handler;
 
+pub mod prelude {
+    pub use crate::JackdawRemotePlugin;
+}
+
 /// Default BRP HTTP port for Jackdaw remote connections.
 pub const DEFAULT_PORT: u16 = 15702;
 

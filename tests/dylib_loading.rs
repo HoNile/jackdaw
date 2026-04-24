@@ -20,9 +20,7 @@ use std::{mem::ManuallyDrop, path::PathBuf};
 
 use bevy::prelude::*;
 use jackdaw_api_internal::lifecycle::ExtensionCatalog;
-use jackdaw_loader::{
-    DylibLoaderPlugin, LoadError, LoadedDylibs, LoadedKind, load_from_path, peek_kind,
-};
+use jackdaw_loader::{LoadError, LoadedDylibs, LoadedKind, load_from_path, peek_kind};
 
 mod util;
 
@@ -72,12 +70,7 @@ fn fixture_path() -> PathBuf {
 /// [`LoadedDylibs`] exists but no on-disk directory is scanned.
 /// Tests drive loading explicitly via [`load_from_path`].
 fn headless_app_with_empty_dylib_loader() -> LeakyApp {
-    let mut app = util::headless_app();
-    app.add_plugins(DylibLoaderPlugin {
-        extra_paths: Vec::new(),
-        include_user_dir: false,
-        include_env_dir: false,
-    });
+    let app = util::headless_app();
     LeakyApp(ManuallyDrop::new(app))
 }
 

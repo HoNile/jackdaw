@@ -10,7 +10,7 @@
 //! Run with: `cargo run --example remote_game`
 
 use bevy::prelude::*;
-use jackdaw_remote::JackdawRemotePlugin;
+use jackdaw_remote::prelude::*;
 
 fn main() -> AppExit {
     App::new()

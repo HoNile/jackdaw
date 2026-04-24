@@ -18,6 +18,9 @@ pub mod hierarchy;
 pub mod inspector;
 pub mod keybind_settings;
 pub mod keybinds;
+
+use std::marker::PhantomData;
+
 pub use inspector::{EditorMeta, ReflectEditorMeta};
 pub mod core_extension;
 pub mod ext_build;
@@ -56,6 +59,7 @@ pub mod viewport_select;
 pub mod viewport_util;
 
 use bevy::{
+    app::PluginGroupBuilder,
     ecs::system::SystemState,
     feathers::{FeathersPlugins, dark_theme::create_dark_theme, theme::UiTheme},
     input::mouse::{MouseScrollUnit, MouseWheel},
@@ -67,12 +71,13 @@ use jackdaw_api::prelude::*;
 use jackdaw_api_internal::lifecycle::{RegisteredMenuEntry, RegisteredWindow};
 use jackdaw_feathers::dialog::EditorDialog;
 use jackdaw_feathers::{EditorFeathersPlugin, tooltip::Tooltip};
+pub use jackdaw_loader::DylibLoaderPlugin;
 use jackdaw_widgets::menu_bar::MenuAction;
 use selection::Selection;
 
 /// Everything needed to start using Jackdaw.
 pub mod prelude {
-    pub use crate::EditorPlugin;
+    pub use crate::{DylibLoaderPlugin, EditorPlugins, ExtensionPlugin};
     pub use jackdaw_api::prelude::*;
 }
 
@@ -118,7 +123,7 @@ pub struct EditorHidden;
 #[derive(Component, Default)]
 pub struct NonSerializable;
 
-/// The editor plugin. Construct with [`EditorPlugin::new`] for the
+/// The editor plugin group. Construct with [`EditorPlugins::default`] for the
 /// builder, or add the default instance directly with
 /// `app.add_plugins(EditorPlugin::default())`.
 ///
@@ -127,7 +132,7 @@ pub struct NonSerializable;
 ///
 /// ```ignore
 /// App::new()
-///     .add_plugins(jackdaw::EditorPlugin::new()
+///     .add_plugins(jackdaw::EditorPlugins::default()
 ///         .with_extension("my_tool", || Box::new(MyTool))
 ///         .build())
 ///     .run();
@@ -138,7 +143,7 @@ pub struct NonSerializable;
 ///
 /// ```ignore
 /// App::new()
-///     .add_plugins(jackdaw::EditorPlugin::new()
+///     .add_plugins(jackdaw::EditorPlugins::default()
 ///         .with_builtin_extensions(false)
 ///         .with_extension("my_tool", || Box::new(MyTool))
 ///         .build())
@@ -150,117 +155,37 @@ pub struct NonSerializable;
 ///
 /// ```ignore
 /// App::new()
-///     .add_plugins(jackdaw::EditorPlugin::new()
+///     .add_plugins(jackdaw::EditorPlugins::default()
 ///         .with_dylib_loader()
 ///         .build())
 ///     .run();
 /// ```
-pub struct EditorPlugin {
-    extensions: Vec<std::sync::Arc<dyn Fn() -> Box<dyn JackdawExtension> + Send + Sync>>,
-    register_builtins: bool,
-    dylib_loader: Option<DylibLoaderConfig>,
+pub struct EditorPlugins {
+    /// We're reserving a private field so users need to use [`EditorPlugins::default`],
+    /// ensuring forward compatibility in case we add fields in the future.
+    _pd: PhantomData<()>,
 }
 
-#[derive(Default)]
-struct DylibLoaderConfig {
-    extra_paths: Vec<std::path::PathBuf>,
-    include_user_dir: bool,
-    include_env_dir: bool,
-}
-
-impl Default for EditorPlugin {
+impl Default for EditorPlugins {
     fn default() -> Self {
-        Self::new()
+        Self { _pd: PhantomData }
     }
 }
 
-impl EditorPlugin {
-    pub fn new() -> Self {
-        Self {
-            extensions: Vec::new(),
-            register_builtins: true,
-            dylib_loader: None,
-        }
-    }
-
-    /// Register a custom extension. May be called any number of times.
-    ///
-    /// The extension's declared name comes from `JackdawExtension::name()`;
-    /// the `_name` argument is kept for backwards compatibility with the
-    /// pre-1.0 API and is ignored.
-    pub fn with_extension<F>(mut self, _name: impl Into<String>, ctor: F) -> Self
-    where
-        F: Fn() -> Box<dyn JackdawExtension> + Send + Sync + 'static,
-    {
-        self.extensions.push(std::sync::Arc::new(ctor));
-        self
-    }
-
-    /// Control whether Jackdaw's built-in feature-area extensions
-    /// (Scene Tree, Asset Browser, Timeline, Terminal, Inspector) are
-    /// registered. Defaults to `true`.
-    pub fn with_builtin_extensions(mut self, enable: bool) -> Self {
-        self.register_builtins = enable;
-        self
-    }
-
-    /// Enable discovery and loading of dynamic-library extensions.
-    ///
-    /// With the defaults, the loader scans the per-user config
-    /// directory (`~/.config/jackdaw/extensions/` and platform
-    /// equivalents) plus `$JACKDAW_EXTENSIONS_DIR` if set. Call
-    /// [`Self::with_extension_search_path`] to add more locations
-    /// or [`Self::with_user_extension_dir`] /
-    /// [`Self::with_extension_env_var`] to opt out of the defaults.
-    ///
-    /// Dynamic-library extensions require the host binary to be
-    /// built with `bevy/dynamic_linking` so the editor and every
-    /// loaded extension share one copy of Bevy at runtime. Without
-    /// that, trait-object calls across the dylib boundary are
-    /// unsound.
-    pub fn with_dylib_loader(mut self) -> Self {
-        self.dylib_loader.get_or_insert_with(|| DylibLoaderConfig {
-            extra_paths: Vec::new(),
-            include_user_dir: true,
-            include_env_dir: true,
-        });
-        self
-    }
-
-    /// Add an explicit search path for the dylib loader. Implicitly
-    /// enables the loader if it wasn't already.
-    pub fn with_extension_search_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
-        let cfg = self.dylib_loader.get_or_insert_with(Default::default);
-        cfg.extra_paths.push(path.into());
-        self
-    }
-
-    /// Opt in or out of searching the per-user config directory.
-    /// Defaults to `true` when the loader is enabled.
-    pub fn with_user_extension_dir(mut self, enable: bool) -> Self {
-        let cfg = self.dylib_loader.get_or_insert_with(Default::default);
-        cfg.include_user_dir = enable;
-        self
-    }
-
-    /// Opt in or out of honouring `$JACKDAW_EXTENSIONS_DIR`.
-    /// Defaults to `true` when the loader is enabled.
-    pub fn with_extension_env_var(mut self, enable: bool) -> Self {
-        let cfg = self.dylib_loader.get_or_insert_with(Default::default);
-        cfg.include_env_dir = enable;
-        self
-    }
-
-    /// Convention-matching terminator for the builder chain. Returns
-    /// the plugin unchanged; exists so callers can write
-    /// `EditorPlugin::new().with_extension(...).build()` in the style
-    /// of Bevy's `PluginGroup::build`.
-    pub fn build(self) -> Self {
-        self
+impl PluginGroup for EditorPlugins {
+    fn build(self) -> PluginGroupBuilder {
+        PluginGroupBuilder::start::<Self>()
+            .add(EditorCorePlugin)
+            .add(ExtensionPlugin::default())
+            .add(DylibLoaderPlugin::default())
     }
 }
 
-impl Plugin for EditorPlugin {
+/// Plugin required for the Jackdaw's core functionality.
+#[derive(Default)]
+pub struct EditorCorePlugin;
+
+impl Plugin for EditorCorePlugin {
     fn build(&self, app: &mut App) {
         // Disable InputDispatchPlugin from FeathersPlugins because bevy_ui_text_input's
         // TextInputPlugin also adds it unconditionally and panics on duplicates.
@@ -398,40 +323,72 @@ impl Plugin for EditorPlugin {
             .add_observer(on_duration_input_commit)
             .add_observer(on_timeline_keyframe_click);
 
-        // Extension registration runs during `build()` so BEI's
-        // `finish()` hook sees every context type. Built-ins override
-        // `kind()` to `Builtin`; user-supplied extensions default to
-        // `Custom`.
-        if self.register_builtins {
-            register_builtins(app);
-        }
-        use jackdaw_api_internal::lifecycle::ExtensionAppExt as _;
-        for ctor in &self.extensions {
-            let ctor = std::sync::Arc::clone(ctor);
-            app.register_extension_dynamic(move || (*ctor)());
-        }
-        if let Some(cfg) = &self.dylib_loader {
-            app.add_plugins(jackdaw_loader::DylibLoaderPlugin {
-                extra_paths: cfg.extra_paths.clone(),
-                include_user_dir: cfg.include_user_dir,
-                include_env_dir: cfg.include_env_dir,
-            });
-        }
-
         app.add_plugins(extension_lifecycle::plugin);
     }
 }
 
-/// Register the built-in feature-area extensions. Called by
-/// [`EditorPlugin::build`] when `register_builtins` is `true`.
-fn register_builtins(app: &mut App) {
-    use jackdaw_api_internal::lifecycle::ExtensionAppExt as _;
-    app.add_plugins(core_extension::plugin)
-        .register_extension::<builtin_extensions::CoreWindowsExtension>()
-        .register_extension::<builtin_extensions::AssetBrowserExtension>()
-        .register_extension::<builtin_extensions::TimelineExtension>()
-        .register_extension::<builtin_extensions::TerminalExtension>()
-        .register_extension::<builtin_extensions::InspectorExtension>();
+pub struct ExtensionPlugin {
+    pub user_extensions: Vec<std::sync::Arc<dyn Fn() -> Box<dyn JackdawExtension> + Send + Sync>>,
+    pub enable_builtin_extensiosn: bool,
+}
+
+impl Default for ExtensionPlugin {
+    fn default() -> Self {
+        Self {
+            user_extensions: Vec::new(),
+            enable_builtin_extensiosn: true,
+        }
+    }
+}
+
+impl ExtensionPlugin {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a custom extension. May be called any number of times.
+    ///
+    /// The extension's declared name comes from `JackdawExtension::name()`;
+    /// the `_name` argument is kept for backwards compatibility with the
+    /// pre-1.0 API and is ignored.
+    pub fn with_extension<F>(mut self, _name: impl Into<String>, ctor: F) -> Self
+    where
+        F: Fn() -> Box<dyn JackdawExtension> + Send + Sync + 'static,
+    {
+        self.user_extensions.push(std::sync::Arc::new(ctor));
+        self
+    }
+
+    /// Control whether Jackdaw's built-in feature-area extensions
+    /// (Scene Tree, Asset Browser, Timeline, Terminal, Inspector) are
+    /// registered. Defaults to `true`.
+    pub fn with_builtin_extensions(mut self, enable: bool) -> Self {
+        self.enable_builtin_extensiosn = enable;
+        self
+    }
+}
+
+impl Plugin for ExtensionPlugin {
+    fn build(&self, app: &mut App) {
+        // Extension registration runs during `build()` so BEI's
+        // `finish()` hook sees every context type. Built-ins override
+        // `kind()` to `Builtin`; user-supplied extensions default to
+        // `Custom`.
+        use jackdaw_api_internal::lifecycle::ExtensionAppExt as _;
+        if self.enable_builtin_extensiosn {
+            app.add_plugins(core_extension::plugin)
+                .register_extension::<builtin_extensions::CoreWindowsExtension>()
+                .register_extension::<builtin_extensions::AssetBrowserExtension>()
+                .register_extension::<builtin_extensions::TimelineExtension>()
+                .register_extension::<builtin_extensions::TerminalExtension>()
+                .register_extension::<builtin_extensions::InspectorExtension>();
+        }
+
+        for ctor in &self.user_extensions {
+            let ctor = std::sync::Arc::clone(ctor);
+            app.register_extension_dynamic(move || (*ctor)());
+        }
+    }
 }
 
 /// Drained once per frame so multiple registrations coalesce into a
