@@ -85,20 +85,12 @@ impl Plugin for DockDragPlugin {
     }
 }
 
-fn logical_rect(computed: &ComputedNode, transform: &UiGlobalTransform) -> (Vec2, Vec2) {
+fn logical_rect(computed: &ComputedNode, transform: &UiGlobalTransform) -> Rect {
     let inv = computed.inverse_scale_factor();
     let size = computed.size() * inv;
     let (_scale, _angle, center) = transform.to_scale_angle_translation();
     let center = center.trunc() * inv;
-    let top_left = center - size * 0.5;
-    (top_left, size)
-}
-
-fn point_in_rect(point: Vec2, top_left: Vec2, size: Vec2) -> bool {
-    point.x >= top_left.x
-        && point.x <= top_left.x + size.x
-        && point.y >= top_left.y
-        && point.y <= top_left.y + size.y
+    Rect::from_center_size(center, size)
 }
 
 fn on_tab_drag_start(
@@ -305,16 +297,14 @@ fn on_drag_move(
             let mut new_overlay = None;
 
             for (tab_row_entity, computed, node, ui_transform, children, parent) in &tab_rows {
-                let (row_top_left, row_size) = logical_rect(computed, ui_transform);
+                let row_rect = logical_rect(computed, ui_transform);
                 let parent_contains =
                     node_query
                         .get(parent.0)
                         .is_ok_and(|(parent_computed, parent_transform)| {
-                            let (parent_top_left, parent_size) =
-                                logical_rect(parent_computed, parent_transform);
-                            point_in_rect(cursor, parent_top_left, parent_size)
+                            logical_rect(parent_computed, parent_transform).contains(cursor)
                         });
-                if !point_in_rect(cursor, row_top_left, row_size) && !parent_contains {
+                if !row_rect.contains(cursor) && !parent_contains {
                     continue;
                 }
                 let mut closest_child: Option<(Vec2, Vec2, usize, f32)> = None;
@@ -393,42 +383,27 @@ fn on_drag_move(
 
             if new_target.is_none() {
                 for (area_entity, computed, ui_transform) in &areas {
-                    let (top_left, size) = logical_rect(computed, ui_transform);
-                    if !point_in_rect(cursor, top_left, size) {
+                    let area_rect = logical_rect(computed, ui_transform);
+                    if !area_rect.contains(cursor) {
                         continue;
                     }
-                    let rel = cursor - top_left;
-                    let frac_x = rel.x / size.x;
-                    let frac_y = rel.y / size.y;
 
-                    let edge = if frac_y < 0.25 {
-                        Some(DropEdge::Top)
-                    } else if frac_y > 0.75 {
-                        Some(DropEdge::Bottom)
-                    } else if frac_x < 0.25 {
-                        Some(DropEdge::Left)
-                    } else if frac_x > 0.75 {
-                        Some(DropEdge::Right)
-                    } else {
-                        None
-                    };
-
-                    if let Some(edge) = edge {
+                    if let Some(edge) = cursor_edge(area_rect, cursor) {
                         new_target = Some(DropTarget::AreaEdge {
                             area: area_entity,
                             edge,
                         });
 
-                        let (overlay_pos, overlay_size) = edge_overlay_rect(top_left, size, edge);
+                        let overlay_rect = edge_overlay_rect(area_rect, edge);
                         let overlay = commands
                             .spawn((
                                 DropOverlay,
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    left: Val::Px(overlay_pos.x),
-                                    top: Val::Px(overlay_pos.y),
-                                    width: Val::Px(overlay_size.x),
-                                    height: Val::Px(overlay_size.y),
+                                    left: Val::Px(overlay_rect.min.x),
+                                    top: Val::Px(overlay_rect.min.y),
+                                    width: Val::Px(overlay_rect.size().x),
+                                    height: Val::Px(overlay_rect.size().y),
                                     border: UiRect::all(Val::Px(2.0)),
                                     border_radius: BorderRadius::all(Val::Px(4.0)),
                                     ..default()
@@ -447,10 +422,10 @@ fn on_drag_move(
                                 DropOverlay,
                                 Node {
                                     position_type: PositionType::Absolute,
-                                    left: Val::Px(top_left.x),
-                                    top: Val::Px(top_left.y),
-                                    width: Val::Px(size.x),
-                                    height: Val::Px(size.y),
+                                    left: Val::Px(area_rect.min.x),
+                                    top: Val::Px(area_rect.min.y),
+                                    width: Val::Px(area_rect.size().x),
+                                    height: Val::Px(area_rect.size().y),
                                     border: UiRect::all(Val::Px(2.0)),
                                     border_radius: BorderRadius::all(Val::Px(4.0)),
                                     ..default()
@@ -472,27 +447,18 @@ fn on_drag_move(
             // re-populate a collapsed side panel.
             if new_target.is_none() {
                 for (computed, ui_transform) in &viewports {
-                    let (top_left, size) = logical_rect(computed, ui_transform);
-                    if !point_in_rect(cursor, top_left, size) {
+                    let viewport_rect = logical_rect(computed, ui_transform);
+                    if !viewport_rect.contains(cursor) {
                         continue;
                     }
-                    let rel = cursor - top_left;
-                    let frac_x = rel.x / size.x;
-                    let frac_y = rel.y / size.y;
 
-                    // No top anchor above the viewport, so skip Top.
-                    // The center region (25..75% on both axes) is a no-op.
-                    let edge = if frac_y > 0.75 {
-                        Some(DropEdge::Bottom)
-                    } else if frac_x < 0.25 {
-                        Some(DropEdge::Left)
-                    } else if frac_x > 0.75 {
-                        Some(DropEdge::Right)
-                    } else {
-                        None
+                    let Some(edge) = cursor_edge(viewport_rect, cursor) else {
+                        break;
                     };
-
-                    let Some(edge) = edge else { break };
+                    if edge == DropEdge::Top {
+                        // No top anchor above the viewport.
+                        break;
+                    }
                     let anchor_id = match edge {
                         DropEdge::Left => "left",
                         DropEdge::Right => "right_sidebar",
@@ -505,16 +471,16 @@ fn on_drag_move(
                         edge,
                     });
 
-                    let (overlay_pos, overlay_size) = edge_overlay_rect(top_left, size, edge);
+                    let overlay_rect = edge_overlay_rect(viewport_rect, edge);
                     let overlay = commands
                         .spawn((
                             DropOverlay,
                             Node {
                                 position_type: PositionType::Absolute,
-                                left: Val::Px(overlay_pos.x),
-                                top: Val::Px(overlay_pos.y),
-                                width: Val::Px(overlay_size.x),
-                                height: Val::Px(overlay_size.y),
+                                left: Val::Px(overlay_rect.min.x),
+                                top: Val::Px(overlay_rect.min.y),
+                                width: Val::Px(overlay_rect.size().x),
+                                height: Val::Px(overlay_rect.size().y),
                                 border: UiRect::all(Val::Px(2.0)),
                                 border_radius: BorderRadius::all(Val::Px(4.0)),
                                 ..default()
@@ -731,19 +697,49 @@ fn find_parent_area(
     }
 }
 
-fn edge_overlay_rect(top_left: Vec2, size: Vec2, edge: DropEdge) -> (Vec2, Vec2) {
-    match edge {
-        DropEdge::Top => (top_left, Vec2::new(size.x, size.y * 0.5)),
-        DropEdge::Bottom => (
-            Vec2::new(top_left.x, top_left.y + size.y * 0.5),
-            Vec2::new(size.x, size.y * 0.5),
-        ),
-        DropEdge::Left => (top_left, Vec2::new(size.x * 0.5, size.y)),
-        DropEdge::Right => (
-            Vec2::new(top_left.x + size.x * 0.5, top_left.y),
-            Vec2::new(size.x * 0.5, size.y),
-        ),
+fn cursor_edge(rect: Rect, cursor: Vec2) -> Option<DropEdge> {
+    let rel = cursor - rect.center();
+    let frac_x = rel.x / rect.size().x;
+    let frac_y = rel.y / rect.size().y;
+
+    // The center region is a no-op.
+    // the outer n% of the rect's volume are the drop edges.
+    const EDGE_PERCENT: f32 = 0.25;
+
+    if frac_x < -EDGE_PERCENT {
+        Some(DropEdge::Left)
+    } else if frac_x > EDGE_PERCENT {
+        Some(DropEdge::Right)
+    } else if frac_y > EDGE_PERCENT {
+        Some(DropEdge::Bottom)
+    } else if frac_y < -EDGE_PERCENT {
+        // Top is the lowest priority since the viewport is allowed to skip it
+        Some(DropEdge::Top)
+    } else {
+        None
     }
+}
+
+fn edge_overlay_rect(rect: Rect, edge: DropEdge) -> Rect {
+    let (center, size) = match edge {
+        DropEdge::Top => (
+            rect.center() - Vec2::Y * rect.size().y * 0.25,
+            rect.size() * Vec2::new(1.0, 0.5),
+        ),
+        DropEdge::Bottom => (
+            rect.center() + Vec2::Y * rect.size().y * 0.25,
+            rect.size() * Vec2::new(1.0, 0.5),
+        ),
+        DropEdge::Left => (
+            rect.center() - Vec2::X * rect.size().x * 0.25,
+            rect.size() * Vec2::new(0.5, 1.0),
+        ),
+        DropEdge::Right => (
+            rect.center() + Vec2::X * rect.size().x * 0.25,
+            rect.size() * Vec2::new(0.5, 1.0),
+        ),
+    };
+    Rect::from_center_size(center, size)
 }
 
 fn is_far_side(mouse_pos: Vec2, child_pos: Vec2, parent: &Node) -> (bool, bool) {
