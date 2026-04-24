@@ -1,4 +1,4 @@
-//! Sample extension.
+//! Minimal dynamic extension.
 //!
 //! Demonstrates three pieces of the extension API:
 //! - A plain dock window (`Hello Extension`).

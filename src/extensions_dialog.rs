@@ -8,7 +8,11 @@ use bevy::{
     tasks::{AsyncComputeTaskPool, Task, futures_lite::future},
 };
 use jackdaw_api::prelude::ExtensionKind;
-use jackdaw_api_internal::lifecycle::{Extension, ExtensionCatalog};
+use jackdaw_api_internal::{
+    extensions_config::persist_current_enabled,
+    lifecycle::{Extension, ExtensionCatalog},
+    paths::config_dir,
+};
 use jackdaw_feathers::{
     button::{ButtonClickEvent, ButtonProps, ButtonSize, ButtonVariant, button},
     checkbox::{CheckboxCommitEvent, CheckboxProps, checkbox},
@@ -18,7 +22,7 @@ use jackdaw_feathers::{
 };
 use rfd::{AsyncFileDialog, FileHandle};
 
-use crate::extensions_config;
+use crate::extension_resolution;
 use jackdaw_api_internal::lifecycle::{disable_extension, enable_extension};
 
 pub struct ExtensionsDialogPlugin;
@@ -129,7 +133,7 @@ fn populate_extensions_dialog(
         // from the dialog entirely rather than rendering a locked
         // checkbox — they're implementation detail, not a user
         // choice.
-        if extensions_config::is_required(&id) {
+        if extension_resolution::is_required(&id) {
             continue;
         }
         let row = (
@@ -169,7 +173,7 @@ fn populate_extensions_dialog(
         ));
     }
 
-    spawn_section_header(&mut commands, list, "Custom");
+    spawn_section_header(&mut commands, list, "Regular");
     if custom_rows.is_empty() {
         commands.spawn((
             ChildOf(list),
@@ -178,7 +182,7 @@ fn populate_extensions_dialog(
                 ..default()
             },
             children![(
-                Text::new("No custom extensions installed"),
+                Text::new("No regular extensions installed"),
                 TextFont {
                     font_size: tokens::FONT_SM,
                     ..default()
@@ -293,7 +297,7 @@ fn on_extension_checkbox_commit(
     // checkbox in the first place (see `populate_extensions_dialog`),
     // but if one slipped through we refuse to disable it rather than
     // letting the editor end up in a broken state.
-    if !checked && extensions_config::is_required(&name) {
+    if !checked && extension_resolution::is_required(&name) {
         warn!("Refusing to disable required extension `{name}`");
         return;
     }
@@ -304,7 +308,7 @@ fn on_extension_checkbox_commit(
         } else {
             disable_extension(world, &name);
         }
-        extensions_config::persist_current_enabled(world);
+        persist_current_enabled(world);
     });
 }
 
@@ -510,7 +514,7 @@ fn install_picked_file(
     src: &std::path::Path,
     target: InstallTarget,
 ) -> std::io::Result<std::path::PathBuf> {
-    let Some(config) = crate::project::config_dir() else {
+    let Some(config) = config_dir() else {
         return Err(std::io::Error::other(
             "platform config directory is unavailable",
         ));

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use jackdaw_api_internal::lifecycle::enable_extension;
 
-use crate::extensions_config::resolve_enabled_list;
+use crate::extension_resolution::resolve_enabled_list;
 
 pub(super) fn plugin(app: &mut App) {
     // Must run after every plugin's `finish()`: BEI initializes

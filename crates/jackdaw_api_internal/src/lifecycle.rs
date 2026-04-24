@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::extensions_config::init_extension;
 use crate::operator::cancel_active_modal;
 use crate::prelude::*;
 use bevy::ecs::component::ComponentId;
@@ -320,6 +321,8 @@ impl ExtensionAppExt for App {
         self.world_mut()
             .resource_mut::<ExtensionCatalog>()
             .register_extension_internal(ctor);
+
+        init_extension(ext.id());
         self
     }
 }

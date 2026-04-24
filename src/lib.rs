@@ -30,8 +30,8 @@ pub use inspector::{EditorMeta, ReflectEditorMeta};
 pub mod core_extension;
 pub mod ext_build;
 mod extension_lifecycle;
+pub mod extension_resolution;
 pub mod extension_watcher;
-pub mod extensions_config;
 pub mod extensions_dialog;
 pub mod hot_reload;
 pub mod layout;
@@ -357,7 +357,7 @@ impl ExtensionPlugin {
     /// Register an extension. May be called any number of times.
     pub fn with_extension<T: JackdawExtension + Default>(mut self) -> Self {
         const {
-            assert!(size_of::<T>() == 0, "Extension type must be zero-sized");
+            assert!(size_of::<T>() == 0, "Extension must be a zero-sized type.");
         }
         self.user_extensions
             .push(std::sync::Arc::new(|| Box::new(T::default())));

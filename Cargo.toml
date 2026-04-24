@@ -36,8 +36,8 @@ dylib = ["dep:jackdaw_sdk", "jackdaw_api/dynamic_linking"]
 [workspace]
 members = [
     "crates/*",
-    "examples/sample_extension",
-    "examples/viewable_camera_extension",
+    "examples/extension/dynamic_extension",
+    "examples/extension/viewable_camera_extension",
     "tests/fixtures/test_fixture_extension",
 ]
 
@@ -206,3 +206,8 @@ lto = "thin"
 # PE export cap.
 [profile.release.package.jackdaw_sdk]
 codegen-units = 1
+
+[[example]]
+name = "minimal_extension"
+path = "examples/extension/minimal_extension.rs"
+doc-scrape-examples = true

@@ -5,7 +5,7 @@ use jackdaw_api_internal::lifecycle::ExtensionAppExt as _;
 use jackdaw_feathers::button::{ButtonClickEvent, ButtonOperatorCall};
 
 /// Catalog name of the Core extension. Exported so
-/// [`crate::extensions_config::REQUIRED_EXTENSIONS`] and the
+/// [`crate::extension_resolution::REQUIRED_EXTENSIONS`] and the
 /// Extensions dialog can refer to it without duplicating the
 /// literal string.
 pub const CORE_EXTENSION_ID: &str = "jackdaw.core";

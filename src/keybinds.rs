@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use jackdaw_api_internal::paths::keybinds_path;
 use serde_json::{Map, Value};
 
 pub use jackdaw_commands::keybinds::{EditorAction, Keybind, KeybindRegistry};
@@ -10,10 +11,6 @@ impl Plugin for KeybindsPlugin {
         app.init_resource::<KeybindRegistry>()
             .add_systems(OnEnter(crate::AppState::Editor), load_keybinds);
     }
-}
-
-fn keybinds_path() -> Option<std::path::PathBuf> {
-    crate::project::config_dir().map(|d| d.join("keybinds.json"))
 }
 
 fn load_keybinds(mut registry: ResMut<KeybindRegistry>) {

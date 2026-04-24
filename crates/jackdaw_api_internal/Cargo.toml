@@ -13,6 +13,9 @@ jackdaw_panels.workspace = true
 jackdaw_commands.workspace = true
 jackdaw_api_macros.workspace = true
 jackdaw_jsn.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

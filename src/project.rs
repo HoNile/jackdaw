@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
+use jackdaw_api_internal::paths::recent_file_path;
 use jackdaw_jsn::format::{JsnHeader, JsnProject, JsnProjectConfig};
 use serde::{Deserialize, Serialize};
 
@@ -34,14 +35,6 @@ pub struct RecentEntry {
     pub path: PathBuf,
     pub name: String,
     pub last_opened: String,
-}
-
-pub fn config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("jackdaw"))
-}
-
-fn recent_file_path() -> Option<PathBuf> {
-    config_dir().map(|d| d.join("recent.json"))
 }
 
 pub fn read_recent_projects() -> RecentProjects {

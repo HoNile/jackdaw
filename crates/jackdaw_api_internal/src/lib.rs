@@ -44,9 +44,11 @@
 //! ```
 
 mod export;
+pub mod extensions_config;
 pub mod ffi;
 pub mod lifecycle;
 pub mod operator;
+pub mod paths;
 pub mod pie;
 mod registries;
 pub mod runtime;
